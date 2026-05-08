@@ -1,0 +1,18 @@
+# 個人データ・APIキー（絶対にコミットしない）
+data/config.json
+data/portfolio.json
+data/cache/
+cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# Mac
+.DS_Store
+
+# ローカル起動用
+start.command
+cowork.log

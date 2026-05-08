@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>高配当株スクリーニング</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1a1d27">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="配当株">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<style>
+  :root {
+    --bg: #0f1117; --bg2: #1a1d27; --bg3: #252836;
+    --border: #2e3245; --accent: #4f8ef7; --accent2: #6c63ff;
+    --text: #e8eaf0; --text2: #9aa0b8; --text3: #5c6280;
+    --ok: #3ecf8e; --warn: #f5a623; --ng: #e74c3c;
+    --hold: #3ecf8e; --watch: #f5a623; --sell: #e74c3c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Hiragino Sans', 'Meiryo', sans-serif; font-size: 14px; }
+
+  /* ヘッダー */
+  header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0 16px; display: flex; align-items: center; gap: 16px; height: 48px; min-width: 0; }
+  header h1 { font-size: 14px; font-weight: 700; color: var(--accent); white-space: nowrap; flex-shrink: 0; }
+  .tabs { display: flex; gap: 2px; flex-shrink: 0; }
+  .tab-btn { background: none; border: none; color: var(--text2); padding: 5px 11px; cursor: pointer; border-radius: 6px; font-size: 13px; transition: all .15s; white-space: nowrap; }
+  .tab-btn:hover { background: var(--bg3); color: var(--text); }
+  .tab-btn.active { background: var(--accent); color: #fff; }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .status-badge { font-size: 11px; padding: 3px 8px; border-radius: 20px; white-space: nowrap; }
+  .status-badge.ok   { background: rgba(62,207,142,.15); color: var(--ok); }
+  .status-badge.warn { background: rgba(245,166,35,.15);  color: var(--warn); }
+
+  /* J-Quantsエラーバナー */
+  #jq-banner { display:none; background: rgba(231,76,60,.12); border-bottom: 1px solid rgba(231,76,60,.3);
+    padding: 8px 16px; font-size: 12px; color: var(--ng); }
+  #jq-banner a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+
+  /* コンテンツ */
+  .tab-content { display: none; padding: 20px 24px; }
+  .tab-content.active { display: block; }
+
+  /* カード */
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; }
+  .card-title { font-size: 13px; font-weight: 600; color: var(--text2); margin-bottom: 12px; text-transform: uppercase; letter-spacing: .5px; }
+
+  /* ボタン */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 16px; border-radius: 7px; border: none; cursor: pointer; font-size: 13px; font-weight: 500; transition: all .15s; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #3a7de8; }
+  .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: var(--border); }
+  .btn-success { background: rgba(62,207,142,.15); color: var(--ok); border: 1px solid rgba(62,207,142,.3); }
+  .btn-success:hover { background: rgba(62,207,142,.25); }
+  .btn-danger { background: rgba(231,76,60,.15); color: var(--ng); border: 1px solid rgba(231,76,60,.3); }
+  .btn-danger:hover { background: rgba(231,76,60,.25); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* 入力 */
+  input, select { background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+  input:focus, select:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  label { font-size: 12px; color: var(--text2); margin-bottom: 4px; display: block; }
+  .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  .form-group { display: flex; flex-direction: column; }
+
+  /* テーブル */
+  .tbl-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: var(--bg3); color: var(--text2); padding: 8px 10px; text-align: left; font-weight: 600; font-size: 11px; border-bottom: 1px solid var(--border); white-space: nowrap; cursor: pointer; user-select: none; }
+  th:hover { color: var(--text); }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  tr:hover td { background: rgba(79,142,247,.05); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* バッジ */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .badge-hold  { background: rgba(62,207,142,.15); color: var(--hold); }
+  .badge-watch { background: rgba(245,166,35,.15);  color: var(--watch); }
+  .badge-sell  { background: rgba(231,76,60,.15);   color: var(--sell); }
+  .badge-ok    { background: rgba(62,207,142,.15); color: var(--ok); }
+  .badge-warn  { background: rgba(245,166,35,.15);  color: var(--warn); }
+  .badge-ng    { background: rgba(231,76,60,.15);   color: var(--ng); }
+
+  /* スコアバー */
+  .score-bar { display: flex; align-items: center; gap: 8px; }
+  .score-bg  { flex: 1; background: var(--bg3); border-radius: 4px; height: 6px; min-width: 60px; }
+  .score-fill { height: 100%; border-radius: 4px; transition: width .3s; }
+
+  /* スコア詳細 */
+  .reasons-cell { max-width: 280px; }
+  .reason-list  { list-style: none; display: flex; flex-direction: column; gap: 3px; }
+  .reason-list li { font-size: 11px; }
+  .r-ok   { color: var(--ok); }
+  .r-warn { color: var(--warn); }
+  .r-ng   { color: var(--ng); }
+
+  /* 配当チャート（ミニ） */
+  .dps-chart { display: flex; align-items: flex-end; gap: 3px; height: 32px; }
+  .dps-bar   { background: var(--accent); border-radius: 2px 2px 0 0; min-width: 8px; transition: height .3s; }
+
+  /* アラート */
+  .alert-item { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .alert-type  { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+  .alert-div  { background: rgba(79,142,247,.15); color: var(--accent); }
+  .alert-rev  { background: rgba(245,166,35,.15);  color: var(--warn); }
+  .alert-err  { background: rgba(231,76,60,.15);   color: var(--ng); }
+  .alert-body { flex: 1; }
+  .alert-title { font-size: 13px; margin-bottom: 3px; }
+  .alert-meta  { font-size: 11px; color: var(--text2); }
+  .alert-link  { color: var(--accent); text-decoration: none; font-size: 11px; }
+  .alert-link:hover { text-decoration: underline; }
+
+  /* スクリーニング条件カード */
+  .criteria-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+  .criteria-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .criteria-card-name  { font-size: 11px; color: var(--text2); margin-bottom: 4px; }
+  .criteria-card-value { font-size: 14px; font-weight: 700; color: var(--accent); }
+
+  /* サマリーカード */
+  .summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .summary-item { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .summary-label { font-size: 11px; color: var(--text2); margin-bottom: 6px; }
+  .summary-value { font-size: 20px; font-weight: 700; }
+  .summary-sub   { font-size: 11px; color: var(--text2); margin-top: 2px; }
+
+  /* ローダー */
+  .loader { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* トースト */
+  #toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; font-size: 13px; opacity: 0; transform: translateY(8px); transition: all .25s; pointer-events: none; z-index: 999; }
+  #toast.show { opacity: 1; transform: none; }
+  #toast.ok   { border-color: var(--ok); }
+  #toast.err  { border-color: var(--ng); }
+
+  /* ポートフォリオ追加フォーム */
+  #add-stock-form { display: none; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+  #add-stock-form.open { display: block; }
+
+  /* インポートエリア */
+  .import-area { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; display: none; }
+  .import-area.open { display: block; }
+
+  /* 設定 */
+  .settings-form { max-width: 400px; display: flex; flex-direction: column; gap: 14px; }
+  .settings-form input { width: 100%; }
+  .setting-note { font-size: 12px; color: var(--text2); line-height: 1.6; }
+
+  /* 詳細展開行 */
+  .detail-row td { background: var(--bg3); padding: 12px 10px; }
+  .detail-inner { display: flex; gap: 24px; flex-wrap: wrap; }
+
+  /* 空状態 */
+  .empty { text-align: center; padding: 40px; color: var(--text2); }
+  .empty-icon { font-size: 32px; margin-bottom: 10px; }
+
+  /* positive/negative */
+  .pos { color: var(--ok); }
+  .neg { color: var(--ng); }
+
+  /* 入替推奨カード */
+  .rec-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+  .rec-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .rec-arrow  { font-size: 20px; color: var(--accent); }
+  .rec-stock  { flex: 1; }
+  .rec-stock-code { font-weight: 700; font-size: 15px; }
+  .rec-stock-meta { font-size: 12px; color: var(--text2); }
+  .rec-candidates { display: flex; gap: 10px; flex-wrap: wrap; }
+  .rec-candidate  { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; min-width: 180px; }
+  .rec-cand-code  { font-weight: 700; color: var(--ok); }
+  .rec-cand-meta  { font-size: 11px; color: var(--text2); margin-top: 2px; }
+  .rec-gain { font-size: 11px; background: rgba(62,207,142,.1); color: var(--ok); border-radius: 4px; padding: 2px 7px; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📈 高配当株</h1>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="portfolio" onclick="showTab('portfolio',this)">ポートフォリオ</button>
+    <button class="tab-btn" data-tab="screen" onclick="showTab('screen',this)">スクリーニング</button>
+    <button class="tab-btn" data-tab="recommend" onclick="showTab('recommend',this)">入替推奨</button>
+    <button class="tab-btn" data-tab="alerts" onclick="showTab('alerts',this)">アラート</button>
+    <button class="tab-btn" data-tab="settings" onclick="showTab('settings',this)">⚙️ 設定</button>
+  </div>
+  <div class="header-right">
+    <div id="api-status" class="status-badge warn">未接続</div>
+  </div>
+</header>
+<div id="jq-banner">
+  ⚠️ J-Quants APIに接続できません。DPS・PER・ROE等が表示されません。
+  → <a onclick="showTab('settings', document.querySelector('[data-tab=settings]'))">設定タブ</a>でAPIキーを確認してください。
+</div>
+
+<div id="toast"></div>
+
+<!-- ===================== ポートフォリオ ===================== -->
+<div id="tab-portfolio" class="tab-content active">
+
+  <div class="summary-grid" id="portfolio-summary"></div>
+
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+      <span class="card-title" style="margin:0">保有銘柄</span>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-secondary" onclick="toggleImportArea('csv-import-area')">📂 CSVインポート</button>
+        <button class="btn btn-secondary" onclick="loadPortfolioMetrics()">
+          <span id="pfx-loader"></span> データ更新
+        </button>
+        <button class="btn btn-primary" onclick="toggleAddForm()">＋ 手動追加</button>
+      </div>
+    </div>
+
+    <!-- CSV インポートエリア -->
+    <div id="csv-import-area" class="import-area">
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text2)">CSVインポート</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>CSVファイル（SBI証券の保有証券一覧CSVなど）</label>
+          <input type="file" id="csv-file-input" accept=".csv" style="width:320px;">
+        </div>
+        <button class="btn btn-primary" onclick="importCSV()" style="align-self:flex-end;">インポート</button>
+        <button class="btn btn-secondary" onclick="toggleImportArea('csv-import-area')" style="align-self:flex-end;">キャンセル</button>
+      </div>
+      <div class="setting-note" style="margin-top:8px;">
+        コード列：「コード」「証券コード」「銘柄コード」「code」のいずれか。数量・取得単価も自動認識します。
+      </div>
+    </div>
+
+    <!-- 手動追加フォーム -->
+    <div id="add-stock-form">
+      <div class="form-row" style="margin-bottom:10px;">
+        <div class="form-group">
+          <label>証券コード（4桁）</label>
+          <input type="text" id="in-code" placeholder="8316" maxlength="4" style="width:100px;">
+        </div>
+        <div class="form-group">
+          <label>銘柄名（任意）</label>
+          <input type="text" id="in-name" placeholder="三井住友FG" style="width:160px;">
+        </div>
+        <div class="form-group">
+          <label>保有株数</label>
+          <input type="number" id="in-shares" placeholder="100" style="width:100px;">
+        </div>
+        <div class="form-group">
+          <label>平均取得単価（円）</label>
+          <input type="number" id="in-avg" placeholder="7500" style="width:120px;">
+        </div>
+        <div class="form-group">
+          <label>メモ</label>
+          <input type="text" id="in-memo" placeholder="累進配当" style="width:160px;">
+        </div>
+        <button class="btn btn-primary" onclick="addStock()" style="align-self:flex-end;">追加</button>
+        <button class="btn btn-secondary" onclick="toggleAddForm()" style="align-self:flex-end;">キャンセル</button>
+      </div>
+    </div>
+
+    <div class="tbl-wrap">
+      <table id="portfolio-table">
+        <thead>
+          <tr>
+            <th onclick="sortTable('portfolio-table',0)">コード</th>
+            <th onclick="sortTable('portfolio-table',1)">銘柄名</th>
+            <th onclick="sortTable('portfolio-table',2)">セクター</th>
+            <th class="num" onclick="sortTable('portfolio-table',3)">現在値</th>
+            <th class="num" onclick="sortTable('portfolio-table',4)">利回り%</th>
+            <th class="num" onclick="sortTable('portfolio-table',5)">DPS</th>
+            <th class="num" onclick="sortTable('portfolio-table',6)">PER</th>
+            <th class="num" onclick="sortTable('portfolio-table',7)">PBR</th>
+            <th class="num" onclick="sortTable('portfolio-table',8)">ROE%</th>
+            <th class="num" onclick="sortTable('portfolio-table',9)">自己資本%</th>
+            <th class="num" onclick="sortTable('portfolio-table',10)">配当性向%</th>
+            <th class="num" onclick="sortTable('portfolio-table',11)">含み損益</th>
+            <th class="num" onclick="sortTable('portfolio-table',12)">条件</th>
+            <th class="num" onclick="sortTable('portfolio-table',13)">スコア</th>
+            <th onclick="sortTable('portfolio-table',14)">判定</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="portfolio-tbody">
+          <tr><td colspan="16" class="empty"><div class="empty-icon">📂</div>銘柄を追加してください</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== スクリーニング ===================== -->
+<div id="tab-screen" class="tab-content">
+
+  <!-- 固定条件表示 -->
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <div class="card-title" style="margin:0">スクリーニング条件（固定）</div>
+      <span style="font-size:11px;color:var(--text3)">※ 条件は固定です。変更する場合は設定ファイルを編集してください。</span>
+    </div>
+    <div class="criteria-grid" id="criteria-display">
+      <!-- JS で描画 -->
+      <div class="criteria-card"><div class="criteria-card-name">読み込み中...</div></div>
+    </div>
+    <div style="margin-top:14px; display:flex; gap:8px; align-items:center;">
+      <button class="btn btn-primary" onclick="runScreen()" id="screen-btn">スクリーニング実行</button>
+      <span id="screen-loader"></span>
+      <span id="screen-count" style="color:var(--text2); font-size:12px;"></span>
+    </div>
+    <p class="setting-note" style="margin-top:10px;">
+      ※ 全銘柄の財務データを取得するため初回は数分かかります。2回目以降はキャッシュ使用。<br>
+      ※ 最低フィルタ：配当利回り2.5%以上 かつ 時価総額250億以上（結果を絞るため）。
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="tbl-wrap">
+      <table id="screen-table">
+        <thead>
+          <tr>
+            <th onclick="sortTable('screen-table',0)">コード</th>
+            <th onclick="sortTable('screen-table',1)">銘柄名</th>
+            <th onclick="sortTable('screen-table',2)">セクター</th>
+            <th onclick="sortTable('screen-table',3)">市場</th>
+            <th class="num" onclick="sortTable('screen-table',4)">時価総額(億)</th>
+            <th class="num" onclick="sortTable('screen-table',5)">現在値</th>
+            <th class="num" onclick="sortTable('screen-table',6)">利回り%</th>
+            <th class="num" onclick="sortTable('screen-table',7)">DPS</th>
+            <th class="num" onclick="sortTable('screen-table',8)">PER</th>
+            <th class="num" onclick="sortTable('screen-table',9)">PBR</th>
+            <th class="num" onclick="sortTable('screen-table',10)">ROE%</th>
+            <th class="num" onclick="sortTable('screen-table',11)">営業利益率%</th>
+            <th class="num" onclick="sortTable('screen-table',12)">自己資本%</th>
+            <th class="num" onclick="sortTable('screen-table',13)">配当性向%</th>
+            <th class="num" onclick="sortTable('screen-table',14)">条件</th>
+            <th class="num" onclick="sortTable('screen-table',15)">スコア</th>
+            <th onclick="sortTable('screen-table',16)">判定</th>
+          </tr>
+        </thead>
+        <tbody id="screen-tbody">
+          <tr><td colspan="17" class="empty"><div class="empty-icon">🔍</div>「スクリーニング実行」を押してください</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 入替推奨 ===================== -->
+<div id="tab-recommend" class="tab-content">
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <div>
+        <div class="card-title" style="margin:0">入替推奨銘柄</div>
+        <div class="setting-note" style="margin-top:4px;">
+          保有銘柄の中で条件合致数が少ないものに対し、同セクターの優良候補を提示します。
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="loadRecommendations()" id="rec-btn">
+        <span id="rec-loader"></span> 分析実行
+      </button>
+    </div>
+    <div id="rec-list">
+      <div class="empty"><div class="empty-icon">💡</div>「分析実行」を押してください（スクリーニング結果を使用するため時間がかかります）</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== アラート ===================== -->
+<div id="tab-alerts" class="tab-content">
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <div>
+        <div class="card-title" style="margin:0">配当・業績修正アラート</div>
+        <div class="setting-note" style="margin-top:4px;">TDnet適時開示から自動取得。保有銘柄のみ表示。</div>
+      </div>
+      <button class="btn btn-secondary" onclick="loadAlerts()"><span id="alert-loader"></span> 更新</button>
+    </div>
+    <div id="alert-list">
+      <div class="empty"><div class="empty-icon">🔔</div>「更新」を押してアラートを取得します</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 設定 ===================== -->
+<div id="tab-settings" class="tab-content">
+  <div class="card" style="max-width:480px;">
+    <div class="card-title">J-Quants API 設定（v2）</div>
+    <div class="settings-form">
+      <div class="form-group">
+        <label>APIキー</label>
+        <input type="password" id="cfg-apikey" placeholder="APIキーを貼り付け" style="font-family:monospace;">
+        <div id="cfg-hint" style="font-size:11px;color:var(--text2);margin-top:4px;"></div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-primary" onclick="saveConfig()">保存</button>
+        <button class="btn btn-secondary" onclick="testConnection()" id="test-btn">接続テスト</button>
+      </div>
+      <div class="setting-note">
+        ① <a href="https://jpx-jquants.com" target="_blank" style="color:var(--accent);">jpx-jquants.com</a> でログイン<br>
+        ② ダッシュボード → APIキーをコピー<br>
+        ③ 上のフォームに貼り付けて保存 →「接続テスト」で確認
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="max-width:480px; margin-top:16px;">
+    <div class="card-title">データ管理</div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button class="btn btn-danger" onclick="clearCache()">キャッシュクリア</button>
+      <span class="setting-note">財務データのキャッシュを削除します（次回更新時に再取得）</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// タブ制御
+// ============================================================
+function showTab(name, btn) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+
+// ============================================================
+// トースト通知
+// ============================================================
+function toast(msg, type = 'ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show ${type}`;
+  setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+// ============================================================
+// API ヘルパー
+// ============================================================
+async function api(path, opts = {}) {
+  const r = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.message || err.error || `HTTP ${r.status}`);
+  }
+  return r.json();
+}
+
+// ============================================================
+// 設定
+// ============================================================
+async function loadConfig() {
+  try {
+    const d = await api('/api/config');
+    if (d.api_key_hint) document.getElementById('cfg-hint').textContent = `現在のキー: ${d.api_key_hint}`;
+    if (d.configured) checkConnection();
+  } catch (e) {}
+}
+
+async function saveConfig() {
+  const api_key = document.getElementById('cfg-apikey').value.trim();
+  if (!api_key) { toast('APIキーを入力してください', 'err'); return; }
+  await api('/api/config', { method: 'POST', body: JSON.stringify({ api_key }) });
+  toast('APIキーを保存しました');
+  document.getElementById('cfg-apikey').value = '';
+  document.getElementById('cfg-hint').textContent = `現在のキー: ${api_key.slice(0,6)}...`;
+  checkConnection();
+}
+
+async function testConnection() {
+  const btn = document.getElementById('test-btn');
+  btn.disabled = true; btn.textContent = '確認中...';
+  try {
+    const r = await api('/api/test_connection');
+    toast(r.message, 'ok');
+    setApiStatus(true);
+  } catch (e) {
+    toast(e.message, 'err');
+    setApiStatus(false);
+  }
+  btn.disabled = false; btn.textContent = '接続テスト';
+}
+
+async function checkConnection() {
+  try {
+    await api('/api/test_connection');
+    setApiStatus(true);
+  } catch (e) {
+    setApiStatus(false);
+  }
+}
+
+function setApiStatus(ok) {
+  const el = document.getElementById('api-status');
+  el.textContent = ok ? '接続済み' : '未接続';
+  el.className   = 'status-badge ' + (ok ? 'ok' : 'warn');
+}
+
+// ============================================================
+// スクリーニング条件（固定表示）
+// ============================================================
+const CRITERIA_LABELS = {
+  'dividend_yield': ['配当利回り', '3.0〜4.5%'],
+  'market_cap':     ['時価総額', '1,000億円以上'],
+  'pbr':            ['PBR', '1.0倍以下'],
+  'roe':            ['ROE', '8.0%以上'],
+  'per':            ['PER', '15.0倍以下'],
+  'op_margin':      ['営業利益率', '10.0%以上'],
+  'equity_ratio':   ['自己資本比率', '40%以上'],
+  'payout_ratio':   ['配当性向', '30〜50%'],
+};
+
+function renderCriteriaDisplay() {
+  const container = document.getElementById('criteria-display');
+  container.innerHTML = Object.entries(CRITERIA_LABELS).map(([key, [name, val]]) => `
+    <div class="criteria-card">
+      <div class="criteria-card-name">${name}</div>
+      <div class="criteria-card-value">${val}</div>
+    </div>`).join('');
+}
+
+// ============================================================
+// ポートフォリオ管理
+// ============================================================
+let portfolio = [];
+let portfolioMetrics = [];
+let lastScreenResults = [];
+
+async function loadPortfolio() {
+  portfolio = await api('/api/portfolio');
+  renderPortfolioTable(portfolio.map(s => ({ ...s })));
+}
+
+function toggleAddForm() {
+  closeImportAreas();
+  document.getElementById('add-stock-form').classList.toggle('open');
+}
+
+function toggleImportArea(id) {
+  document.getElementById('add-stock-form').classList.remove('open');
+  document.getElementById(id).classList.toggle('open');
+}
+
+function closeImportAreas() {
+  document.getElementById('csv-import-area').classList.remove('open');
+}
+
+async function addStock() {
+  const code   = document.getElementById('in-code').value.trim();
+  const name   = document.getElementById('in-name').value.trim();
+  const shares = parseFloat(document.getElementById('in-shares').value) || 0;
+  const avg    = parseFloat(document.getElementById('in-avg').value)    || 0;
+  const memo   = document.getElementById('in-memo').value.trim();
+
+  if (!code || code.length !== 4) { toast('4桁の証券コードを入力してください', 'err'); return; }
+  if (portfolio.find(s => s.code === code)) { toast('すでに追加済みです', 'err'); return; }
+
+  portfolio.push({ code, name, shares, avg_price: avg, memo });
+  await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
+
+  ['in-code','in-name','in-shares','in-avg','in-memo'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('add-stock-form').classList.remove('open');
+  toast(`${code} を追加しました`);
+  await loadPortfolioMetrics();
+}
+
+async function removeStock(code) {
+  portfolio = portfolio.filter(s => s.code !== code);
+  await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
+  toast(`${code} を削除しました`);
+  await loadPortfolioMetrics();
+}
+
+// CSV インポート
+async function importCSV() {
+  const fileInput = document.getElementById('csv-file-input');
+  if (!fileInput.files[0]) { toast('ファイルを選択してください', 'err'); return; }
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  try {
+    const r = await fetch('/api/import/csv', { method: 'POST', body: formData });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.message);
+    toggleImportArea('csv-import-area');
+    await loadPortfolio();
+    toast(`${d.imported}件をインポートしました。指標を取得中...（約5〜10秒）`);
+    await loadPortfolioMetrics();
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+
+async function loadPortfolioMetrics() {
+  if (!portfolio.length) { renderPortfolioTable([]); return; }
+  const loader = document.getElementById('pfx-loader');
+  loader.innerHTML = '<span class="loader"></span>';
+  try {
+    portfolioMetrics = await api('/api/portfolio/metrics');
+    renderPortfolioTable(portfolioMetrics);
+    renderSummary(portfolioMetrics);
+    checkJQBanner(portfolioMetrics);
+    toast('データを更新しました');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+  loader.innerHTML = '';
+}
+
+function renderSummary(metrics) {
+  const validMetrics = metrics.filter(m => !m.error);
+  const totalValue   = validMetrics.reduce((s, m) => s + (m.current_price || 0) * (m.shares || 0), 0);
+  const totalCost    = validMetrics.reduce((s, m) => s + (m.avg_price || 0)     * (m.shares || 0), 0);
+  const totalPnl     = totalValue - totalCost;
+  const totalDiv     = validMetrics.reduce((s, m) => s + (m.annual_dividend || 0), 0);
+  const avgYield     = validMetrics.length ? validMetrics.reduce((s, m) => s + (m.dividend_yield || 0), 0) / validMetrics.length : 0;
+
+  document.getElementById('portfolio-summary').innerHTML = `
+    <div class="summary-item">
+      <div class="summary-label">保有銘柄数</div>
+      <div class="summary-value">${metrics.length}</div>
+      <div class="summary-sub">銘柄</div>
+    </div>
+    <div class="summary-item">
+      <div class="summary-label">評価額合計</div>
+      <div class="summary-value">${fmtYen(totalValue)}</div>
+      <div class="summary-sub">円</div>
+    </div>
+    <div class="summary-item">
+      <div class="summary-label">含み損益</div>
+      <div class="summary-value ${totalPnl >= 0 ? 'pos' : 'neg'}">${totalPnl >= 0 ? '+' : ''}${fmtYen(totalPnl)}</div>
+      <div class="summary-sub">${totalCost ? (totalPnl / totalCost * 100).toFixed(1) + '%' : ''}</div>
+    </div>
+    <div class="summary-item">
+      <div class="summary-label">年間配当見込（税後）</div>
+      <div class="summary-value">${fmtYen(totalDiv)}</div>
+      <div class="summary-sub">円</div>
+    </div>
+    <div class="summary-item">
+      <div class="summary-label">平均利回り</div>
+      <div class="summary-value">${avgYield.toFixed(2)}</div>
+      <div class="summary-sub">%</div>
+    </div>
+  `;
+}
+
+function checkJQBanner(metrics) {
+  // DPSが0の銘柄が過半数 → J-Quants未接続と判断してバナー表示
+  const valid = metrics.filter(m => !m.error);
+  if (!valid.length) return;
+  const noDps = valid.filter(m => !(m.dps > 0)).length;
+  document.getElementById('jq-banner').style.display = (noDps / valid.length > 0.5) ? 'block' : 'none';
+}
+
+function renderPortfolioTable(metrics) {
+  const tbody = document.getElementById('portfolio-tbody');
+  if (!metrics.length) {
+    tbody.innerHTML = '<tr><td colspan="16" class="empty"><div class="empty-icon">📂</div>銘柄を追加してください</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = metrics.map(m => {
+    if (m.error) return `
+      <tr>
+        <td>${m.code}</td>
+        <td colspan="14" style="color:var(--ng)">${m.error}</td>
+        <td><button class="btn btn-danger" onclick="removeStock('${m.code}')">削除</button></td>
+      </tr>`;
+
+    const pnl    = m.unrealized_pnl ?? null;
+    const pnlPct = m.unrealized_pnl_pct ?? null;
+    const pnlCls = (pnl ?? 0) >= 0 ? 'pos' : 'neg';
+    const pnlStr = pnl != null
+      ? `<span class="${pnlCls}">${pnl >= 0 ? '+' : ''}${fmtYen(pnl)}</span><br><span style="font-size:10px;color:var(--text3)">${pnlPct >= 0 ? '+' : ''}${pnlPct}%</span>`
+      : '—';
+    const score      = m.score ?? 0;
+    const verdict    = m.verdict    || '—';
+    const verdictCls = m.verdict_class || 'watch';
+    const scoreColor = score >= 75 ? 'var(--ok)' : (score >= 50 ? 'var(--warn)' : 'var(--ng)');
+    const trendIcon = m.dividend_trend === 'increasing' ? '↑' : (m.dividend_trend === 'decreasing' ? '↓' : '');
+    const trendCls  = m.dividend_trend === 'increasing' ? 'pos' : (m.dividend_trend === 'decreasing' ? 'neg' : '');
+    const condsBadgeHtml = condsBadge(m.conditions_met, m.conditions_total);
+
+    return `
+      <tr onclick="toggleDetail('${m.code}')" style="cursor:pointer">
+        <td>${m.code}</td>
+        <td>${m.name || '—'}</td>
+        <td style="color:var(--text2);font-size:12px">${m.sector || '—'}</td>
+        <td class="num">${fmt(m.current_price)}<br><span style="font-size:10px;color:var(--text3)">${m.price_source||''}</span></td>
+        <td class="num" style="color:var(--accent)">${fmt(m.dividend_yield)}%</td>
+        <td class="num">${fmt(m.dps)} <span class="${trendCls}" style="font-size:11px">${trendIcon}</span></td>
+        <td class="num">${m.per ?? '—'}</td>
+        <td class="num">${m.pbr ?? '—'}</td>
+        <td class="num">${m.roe ?? '—'}%</td>
+        <td class="num">${m.equity_ratio ?? '—'}%</td>
+        <td class="num">${m.payout_ratio ?? '—'}%</td>
+        <td class="num">${pnlStr}</td>
+        <td class="num">${condsBadgeHtml}</td>
+        <td class="num">
+          <div class="score-bar">
+            <div class="score-bg"><div class="score-fill" style="width:${score}%;background:${scoreColor}"></div></div>
+            <span style="min-width:28px;color:${scoreColor}">${score}</span>
+          </div>
+        </td>
+        <td><span class="badge badge-${verdictCls}">${verdict}</span></td>
+        <td><button class="btn btn-danger" onclick="event.stopPropagation();removeStock('${m.code}')">削除</button></td>
+      </tr>
+      <tr id="detail-${m.code}" class="detail-row" style="display:none">
+        <td colspan="16">
+          <div class="detail-inner">
+            <div>
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px">配当履歴（直近）</div>
+              ${renderDpsChart(m.dps_history)}
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px">判定理由</div>
+              <ul class="reason-list">
+                ${(m.reasons || []).map(([t, txt]) => `<li class="r-${t}">${icon(t)} ${txt}</li>`).join('')}
+              </ul>
+            </div>
+            <div style="font-size:11px; color:var(--text2)">
+              <div>時価総額: ${m.market_cap_oku ? m.market_cap_oku + '億円' : '—'}</div>
+              <div>営業利益率: ${m.op_margin ?? '—'}%</div>
+              <div>流動比率: ${m.current_ratio ?? '—'}%</div>
+              <div>年間配当(税後概算): ${m.annual_dividend ? fmtYen(m.annual_dividend) + '円' : '—'}</div>
+              <div>決算期末: ${m.fy_end || '—'}</div>
+              <div>開示日: ${m.disc_date || '—'}</div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px">条件詳細 (${m.conditions_met}/${m.conditions_total})</div>
+              ${renderConditionsDetail(m.conditions)}
+            </div>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function renderConditionsDetail(conds) {
+  if (!conds) return '—';
+  return Object.entries(CRITERIA_LABELS).map(([key, [name, val]]) => {
+    const ok = conds[key];
+    return `<div style="font-size:11px;margin-bottom:2px">
+      <span style="color:${ok ? 'var(--ok)' : 'var(--ng)'}">${ok ? '✅' : '❌'}</span>
+      <span style="color:var(--text2)"> ${name}: ${val}</span>
+    </div>`;
+  }).join('');
+}
+
+function toggleDetail(code) {
+  const row = document.getElementById('detail-' + code);
+  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+
+function renderDpsChart(history) {
+  if (!history || !history.length) return '<span style="color:var(--text3)">データなし</span>';
+  const maxDps = Math.max(...history.map(h => h.dps), 1);
+  const bars = history.slice(0, 8).reverse().map(h => {
+    const pct = Math.round(h.dps / maxDps * 100);
+    return `<div title="${h.year}: ${h.dps}円" class="dps-bar" style="height:${Math.max(pct,4)}%;width:14px;background:${h.dps === 0 ? 'var(--ng)' : 'var(--accent)'}"></div>`;
+  }).join('');
+  return `<div class="dps-chart" style="height:40px;align-items:flex-end">${bars}</div>`;
+}
+
+// ============================================================
+// スクリーニング
+// ============================================================
+async function runScreen() {
+  const btn = document.getElementById('screen-btn');
+  const ldr = document.getElementById('screen-loader');
+  btn.disabled = true; ldr.innerHTML = '<span class="loader"></span>';
+  document.getElementById('screen-count').textContent = '取得中...';
+
+  try {
+    const results = await api('/api/screen');   // GET（条件はサーバー固定）
+    lastScreenResults = results;
+    renderScreenTable(results);
+    const allMet = results.filter(r => r.all_conditions).length;
+    document.getElementById('screen-count').textContent = `${results.length}件ヒット（全条件合致: ${allMet}件）`;
+    toast(`${results.length}件ヒット（全条件合致: ${allMet}件）`);
+  } catch (e) {
+    toast(e.message, 'err');
+    document.getElementById('screen-count').textContent = '';
+  }
+
+  btn.disabled = false; ldr.innerHTML = '';
+}
+
+function renderScreenTable(results) {
+  const tbody = document.getElementById('screen-tbody');
+  if (!results.length) {
+    tbody.innerHTML = '<tr><td colspan="17" class="empty"><div class="empty-icon">🔍</div>条件に合う銘柄がありませんでした</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = results.map(m => {
+    const scoreColor = m.score >= 75 ? 'var(--ok)' : (m.score >= 50 ? 'var(--warn)' : 'var(--ng)');
+    const condsBadgeHtml = condsBadge(m.conditions_met, m.conditions_total);
+    const rowStyle = m.all_conditions ? 'background:rgba(62,207,142,.04);' : '';
+    return `<tr style="${rowStyle}">
+      <td>${m.code}</td>
+      <td>${m.name || '—'}</td>
+      <td style="color:var(--text2);font-size:12px">${m.sector || '—'}</td>
+      <td style="font-size:12px">${m.market || '—'}</td>
+      <td class="num">${m.market_cap_oku ? m.market_cap_oku + '億' : '—'}</td>
+      <td class="num">${fmt(m.current_price)}</td>
+      <td class="num" style="color:var(--accent)">${fmt(m.dividend_yield)}%</td>
+      <td class="num">${fmt(m.dps)}</td>
+      <td class="num">${m.per ?? '—'}</td>
+      <td class="num">${m.pbr ?? '—'}</td>
+      <td class="num">${m.roe ?? '—'}%</td>
+      <td class="num">${m.op_margin ?? '—'}%</td>
+      <td class="num">${m.equity_ratio ?? '—'}%</td>
+      <td class="num">${m.payout_ratio ?? '—'}%</td>
+      <td class="num">${condsBadgeHtml}</td>
+      <td class="num">
+        <div class="score-bar">
+          <div class="score-bg"><div class="score-fill" style="width:${m.score}%;background:${scoreColor}"></div></div>
+          <span style="min-width:28px;color:${scoreColor}">${m.score}</span>
+        </div>
+      </td>
+      <td><span class="badge badge-${m.verdict_class}">${m.verdict}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+// ============================================================
+// 入替推奨
+// ============================================================
+async function loadRecommendations() {
+  const btn = document.getElementById('rec-btn');
+  const ldr = document.getElementById('rec-loader');
+  btn.disabled = true; ldr.innerHTML = '<span class="loader"></span> ';
+  document.getElementById('rec-list').innerHTML = '<div class="empty"><span class="loader"></span> 分析中（スクリーニング実行も含むため数分かかります）</div>';
+
+  try {
+    const recs = await api('/api/recommendations');
+    renderRecommendations(recs);
+  } catch (e) {
+    toast(e.message, 'err');
+    document.getElementById('rec-list').innerHTML = `<div class="empty"><div class="empty-icon">❌</div>${e.message}</div>`;
+  }
+
+  btn.disabled = false; ldr.innerHTML = '';
+}
+
+function renderRecommendations(recs) {
+  const container = document.getElementById('rec-list');
+  if (!recs.length) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">✅</div>入替推奨はありません（全保有銘柄が良好、またはポートフォリオが未設定）</div>';
+    return;
+  }
+
+  container.innerHTML = recs.map(rec => {
+    const cur = rec.current;
+    const curDiv  = rec.current_annual_div || 0;
+    const gainPct = rec.gain_pct || 0;
+    const yac     = rec.yield_at_cost || 0;
+
+    const candHtml = rec.replacements.map(c => {
+      const divChange    = c.div_change    || 0;
+      const divChangePct = c.div_change_pct || 0;
+      const divColor = divChange >= 0 ? 'var(--ok)' : 'var(--ng)';
+      const divSign  = divChange >= 0 ? '+' : '';
+      return `
+      <div class="rec-candidate">
+        <div class="rec-cand-code">${c.code} ${c.name || ''}</div>
+        <div class="rec-cand-meta" style="margin-top:4px">
+          利回り: <b style="color:var(--accent)">${fmt(c.dividend_yield)}%</b> &nbsp;
+          条件: ${condsBadge(c.conditions_met, 8)} &nbsp;
+          スコア: <b>${c.score ?? '—'}</b>
+        </div>
+        <div class="rec-cand-meta" style="margin-top:4px;padding:4px 6px;background:rgba(0,0,0,.2);border-radius:4px">
+          年間配当(税後概算): <b style="color:${divColor}">${divSign}${fmtYen(divChange)}円 (${divSign}${divChangePct}%)</b><br>
+          <span style="color:var(--text3)">現在 ${fmtYen(curDiv)}円 → 乗替後 ${fmtYen(c.est_annual_div)}円 (約${fmt(c.est_shares)}株)</span>
+        </div>
+        <div class="rec-cand-meta" style="margin-top:4px">
+          PBR: ${c.pbr ?? '—'} / ROE: ${c.roe ?? '—'}% / 配当性向: ${c.payout_ratio ?? '—'}%
+        </div>
+        <div class="rec-cand-meta" style="margin-top:2px">
+          ${c.sector || ''} / ${c.market_cap_oku ? c.market_cap_oku + '億円' : '—'}
+        </div>
+      </div>`;
+    }).join('');
+
+    return `
+      <div class="rec-card">
+        <div class="rec-header">
+          <div class="rec-stock">
+            <div class="rec-stock-code">${cur.code} ${cur.name || ''}</div>
+            <div class="rec-stock-meta">
+              条件: ${condsBadge(cur.conditions_met, 8)} &nbsp;
+              スコア: ${cur.score ?? '—'} &nbsp;
+              <span class="badge badge-${cur.verdict_class || 'watch'}">${cur.verdict || '—'}</span> &nbsp;
+              ${cur.sector || ''}
+            </div>
+            <div class="rec-stock-meta" style="margin-top:4px;color:var(--text3)">
+              取得単価: ${fmt(cur.avg_price)}円 / 現在値: ${fmt(cur.current_price)}円 /
+              含み益: <span style="color:${gainPct >= 0 ? 'var(--ok)' : 'var(--ng)'}">${gainPct >= 0 ? '+' : ''}${gainPct}%</span> /
+              取得利回り: ${yac}%
+            </div>
+          </div>
+          <div class="rec-arrow">→</div>
+          <span class="rec-gain">条件 +${rec.gain_conditions} 改善</span>
+        </div>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:8px">候補銘柄：</div>
+        <div class="rec-candidates">${candHtml}</div>
+      </div>`;
+  }).join('');
+}
+
+// ============================================================
+// アラート
+// ============================================================
+async function loadAlerts() {
+  const ldr = document.getElementById('alert-loader');
+  ldr.innerHTML = '<span class="loader"></span>';
+  try {
+    const alerts = await api('/api/alerts');
+    renderAlerts(alerts);
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+  ldr.innerHTML = '';
+}
+
+function renderAlerts(alerts) {
+  const container = document.getElementById('alert-list');
+  if (!alerts.length) {
+    container.innerHTML = '<div class="empty"><div class="empty-icon">✅</div>アラートはありません</div>';
+    return;
+  }
+  container.innerHTML = alerts.map(a => {
+    if (a.type === 'error') return `<div class="alert-item"><span class="alert-type alert-err">ERROR</span><div class="alert-body"><div class="alert-title">${a.title}</div></div></div>`;
+    const typeCls  = a.type === 'dividend' ? 'alert-div' : 'alert-rev';
+    const typeLabel = a.type === 'dividend' ? '配当' : '業績修正';
+    const link = a.url ? `<a class="alert-link" href="${a.url}" target="_blank">開示文書を開く →</a>` : '';
+    return `
+      <div class="alert-item">
+        <span class="alert-type ${typeCls}">${typeLabel}</span>
+        <div class="alert-body">
+          <div class="alert-title">${a.title}</div>
+          <div class="alert-meta">${a.code} ${a.company ? '/ ' + a.company : ''} &nbsp;|&nbsp; ${a.time} &nbsp;|&nbsp; ${a.source || ''} &nbsp; ${link}</div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ============================================================
+// テーブルソート
+// ============================================================
+const sortState = {};
+function sortTable(tableId, colIdx) {
+  const table = document.getElementById(tableId);
+  const tbody = table.querySelector('tbody');
+  const rows  = Array.from(tbody.querySelectorAll('tr:not(.detail-row)'));
+  const key   = tableId + colIdx;
+  const asc   = !sortState[key];
+  sortState[key] = asc;
+
+  rows.sort((a, b) => {
+    const av = a.cells[colIdx]?.textContent.trim().replace(/[,円%億↑↓+✅❌]/g,'') || '';
+    const bv = b.cells[colIdx]?.textContent.trim().replace(/[,円%億↑↓+✅❌]/g,'') || '';
+    const an = parseFloat(av), bn = parseFloat(bv);
+    if (!isNaN(an) && !isNaN(bn)) return asc ? an - bn : bn - an;
+    return asc ? av.localeCompare(bv, 'ja') : bv.localeCompare(av, 'ja');
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+
+// ============================================================
+// キャッシュクリア
+// ============================================================
+async function clearCache() {
+  try {
+    const r = await api('/api/clear_cache', { method: 'POST' });
+    toast(r.message);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+// ============================================================
+// ユーティリティ
+// ============================================================
+function fmt(v) { return v != null ? Number(v).toLocaleString('ja-JP') : '—'; }
+function fmtYen(v) { return v != null ? Math.round(v).toLocaleString('ja-JP') : '—'; }
+function icon(type) { return type === 'ok' ? '✅' : (type === 'warn' ? '⚠️' : '❌'); }
+
+function condsBadge(met, total) {
+  if (met == null || !total) return '—';
+  const color = (met === total) ? 'var(--ok)' : (met >= total * 0.75 ? 'var(--warn)' : 'var(--ng)');
+  const suffix = (met === total) ? ' ✅' : '';
+  return `<span style="font-weight:700;color:${color}">${met}/${total}${suffix}</span>`;
+}
+
+// ============================================================
+// 初期化
+// ============================================================
+window.addEventListener('DOMContentLoaded', async () => {
+  renderCriteriaDisplay();
+  await loadConfig();
+  await loadPortfolio();
+});
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
