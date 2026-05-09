@@ -889,8 +889,18 @@ def api_portfolio_get():
 
 @app.route('/api/portfolio', methods=['POST'])
 def api_portfolio_save():
-    save_portfolio(request.get_json() or [])
-    return jsonify({'ok': True})
+    data = request.get_json() or []
+    save_portfolio(data)
+    # ポートフォリオ更新後にバックグラウンドでキャッシュをプリウォーム
+    def _warmup(stocks):
+        time.sleep(2)
+        try:
+            api_key = get_api_key()
+            get_portfolio_data_parallel(stocks, api_key)
+        except Exception:
+            pass
+    threading.Thread(target=_warmup, args=(data,), daemon=True).start()
+    return jsonify({'ok': True, 'warming': True})
 
 def _calc_portfolio_metrics():
     """ポートフォリオ指標を計算して返す（内部共通ロジック）"""
@@ -932,6 +942,19 @@ def _calc_portfolio_metrics():
 @app.route('/api/portfolio/metrics')
 def api_portfolio_metrics():
     return jsonify(_calc_portfolio_metrics())
+
+@app.route('/api/portfolio/warmup_status')
+def api_warmup_status():
+    """キャッシュウォームアップの進捗を返す"""
+    portfolio = load_portfolio()
+    if not portfolio:
+        return jsonify({'total': 0, 'cached': 0, 'ready': True})
+    total = len({s.get('code', '')[:4] for s in portfolio})
+    cached = sum(
+        1 for s in portfolio
+        if os.path.exists(os.path.join(CACHE_DIR, f'fn_{s.get("code","")[:4]}.json'))
+    )
+    return jsonify({'total': total, 'cached': cached, 'ready': cached >= total})
 
 @app.route('/api/alerts')
 def api_alerts():

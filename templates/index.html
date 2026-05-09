@@ -595,6 +595,22 @@ async function loadPortfolioMetrics() {
   if (!portfolio.length) { renderPortfolioTable([]); return; }
   const loader = document.getElementById('pfx-loader');
   loader.innerHTML = '<span class="loader"></span>';
+
+  // ウォームアップ状況を確認して進捗表示
+  try {
+    const ws = await api('/api/portfolio/warmup_status');
+    if (!ws.ready && ws.total > 0) {
+      let elapsed = 0;
+      while (elapsed < 150) {
+        const s = await api('/api/portfolio/warmup_status');
+        loader.innerHTML = `<span class="loader"></span> ${s.cached}/${s.total}`;
+        if (s.ready) break;
+        await new Promise(r => setTimeout(r, 3000));
+        elapsed += 3;
+      }
+    }
+  } catch (_) {}
+
   try {
     portfolioMetrics = await api('/api/portfolio/metrics');
     renderPortfolioTable(portfolioMetrics);
