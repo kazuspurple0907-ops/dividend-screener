@@ -246,29 +246,38 @@ def get_master_all():
         return latest
     return get_cached('master_v2', fetch, ttl=86400)
 
-def get_prices_all():
+def get_fins_all():
+    """全銘柄の財務サマリーを date パラメータで過去90日分累積取得（キャッシュ24h）"""
     def fetch():
+        api_key = get_api_key()
+        headers = {'x-api-key': api_key}
+        all_fins = {}
         for delta in range(90):
             d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
             try:
-                rows = jq_get_bulk('/equities/bars/daily', params={'date': d})
-                if rows:
-                    return {r['Code']: r for r in rows}
+                with _jquants_sem:
+                    r = requests.get(f'{JQUANTS_V2}/fins/summary',
+                                     headers=headers, params={'date': d}, timeout=15)
+                    for wait in (5, 10, 20):
+                        if r.status_code != 429:
+                            break
+                        time.sleep(wait)
+                        r = requests.get(f'{JQUANTS_V2}/fins/summary',
+                                         headers=headers, params={'date': d}, timeout=15)
+                if not r.ok:
+                    continue
+                rows = r.json().get('data', [])
+                for row in rows:
+                    code = row.get('Code', '')
+                    if code not in all_fins or row.get('DiscDate', '') > all_fins[code].get('DiscDate', ''):
+                        all_fins[code] = row
+                # 上場銘柄全体の7割程度を超えたら十分
+                if len(all_fins) >= 3000:
+                    break
             except Exception:
                 continue
-        return {}
-    return get_cached('prices_v2', fetch, ttl=3600)
-
-def get_fins_all():
-    def fetch():
-        rows = jq_get_bulk('/fins/summary')
-        latest = {}
-        for r in rows:
-            code = r.get('Code', '')
-            if code not in latest or r.get('DiscDate','') > latest[code].get('DiscDate',''):
-                latest[code] = r
-        return latest
-    return get_cached('fins_v2', fetch, ttl=21600)
+        return all_fins
+    return get_cached('fins_v2', fetch, ttl=86400)  # 24h
 
 # ============================================================
 # Yahoo Finance リアルタイム価格
@@ -376,7 +385,8 @@ def build_metrics(code, master_map, prices_map, fins_map):
     info  = master_map.get(code5) or master_map.get(code4) or {}
     price = prices_map.get(code5) or prices_map.get(code4) or {}
     fins  = fins_map.get(code5)   or fins_map.get(code4)   or {}
-    adj_c = _f(price.get('AdjC') or price.get('C'))
+    # /prices/daily_quotes は Close, AdjClose などのキーを使う
+    adj_c = _f(price.get('AdjClose') or price.get('AdjC') or price.get('Close') or price.get('C'))
     return build_metrics_from(code4, info, fins, rt=None, adj_c_fallback=adj_c)
 
 def score_stock(m):
@@ -496,17 +506,78 @@ def fetch_tdnet_alerts(codes):
 # ============================================================
 
 def run_screening():
-    master_map = get_master_all()
-    prices_map = get_prices_all()
-    fins_map   = get_fins_all()
+    """
+    スクリーニング（無料プラン対応版）
+    1. J-Quants バルクマスター取得（無料プラン対応）
+    2. J-Quants fins/summary を date パラメータで累積取得
+    3. 基本指標でフィルタリング後、Yahoo Finance で価格取得
+    """
+    try:
+        master_map = get_master_all()
+    except Exception as e:
+        raise RuntimeError(f'銘柄マスター取得失敗: {e}')
+    try:
+        fins_map = get_fins_all()
+    except Exception:
+        fins_map = {}
 
-    results = []
+    # ── Step1: 基本指標フィルタ（価格不要）──
+    candidates = []
     for code, info in master_map.items():
         mkt = info.get('MktNm', '')
         if not any(m in mkt for m in ['プライム', 'スタンダード', 'Prime', 'Standard']):
             continue
+        fins = fins_map.get(code) or {}
+        fdiv    = _f(fins.get('FDivAnn'))
+        div_ann = _f(fins.get('DivAnn'))
+        dps     = fdiv if fdiv > 0 else div_ann
+        if dps <= 0:
+            continue  # 無配はスキップ
+        eps  = _f(fins.get('EPS'))
+        bps  = _f(fins.get('BPS'))
+        eq_ar = _f(fins.get('EqAR'))
+        if eps <= 0 or bps <= 0:
+            continue
+        roe = eps / bps * 100
+        if roe < 3:
+            continue  # 極端に低ROEはスキップ
+        candidates.append((code[:4], info, fins, dps))
+
+    # DPS降順で上位300銘柄に絞る（Yahoo取得コスト削減）
+    candidates.sort(key=lambda x: x[3], reverse=True)
+    candidates = candidates[:300]
+
+    # ── Step2: Yahoo Finance で価格並列取得 ──
+    code4s = list({c[0] for c in candidates})
+    rt_cache: dict = {}
+
+    # ポートフォリオ保有分のキャッシュを先に利用
+    for f in os.listdir(CACHE_DIR):
+        if f.startswith('rt_') and f.endswith('.json'):
+            c4 = f[3:-5]
+            try:
+                with open(os.path.join(CACHE_DIR, f)) as fp:
+                    rt_cache[c4] = json.load(fp)
+            except Exception:
+                pass
+
+    uncached = [c for c in code4s if c not in rt_cache]
+    if uncached:
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            futures = {ex.submit(get_realtime_price, c): c for c in uncached}
+            for f in as_completed(futures):
+                c = futures[f]
+                try:
+                    rt_cache[c] = f.result()
+                except Exception:
+                    rt_cache[c] = None
+
+    # ── Step3: 指標計算・フィルタ ──
+    results = []
+    for code4, info, fins, _ in candidates:
         try:
-            m = build_metrics(code, master_map, prices_map, fins_map)
+            rt = rt_cache.get(code4)
+            m  = build_metrics_from(code4, info, fins, rt=rt)
             dy = m.get('dividend_yield') or 0
             mc = m.get('market_cap_oku') or 0
             if dy < 2.5 or mc < 250:
