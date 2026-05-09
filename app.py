@@ -700,6 +700,31 @@ def api_test():
     except Exception as e:
         return jsonify({'ok': False, 'message': str(e)}), 400
 
+@app.route('/api/debug/stock')
+def api_debug_stock():
+    """デバッグ用: 特定銘柄のJ-Quantsレスポンスを確認"""
+    code = request.args.get('code', '1808')
+    code4 = code[:4]
+    code5 = code4 + '0'
+    try:
+        key = get_api_key()
+        key_hint = key[:6] + '...'
+        # master
+        r_m = requests.get(f'{JQUANTS_V2}/equities/master',
+                           headers={'x-api-key': key}, params={'code': code5}, timeout=10)
+        # fins
+        r_f = requests.get(f'{JQUANTS_V2}/fins/summary',
+                           headers={'x-api-key': key}, params={'code': code5}, timeout=10)
+        return jsonify({
+            'key_hint': key_hint,
+            'master_status': r_m.status_code,
+            'master_data': r_m.json() if r_m.ok else r_m.text[:500],
+            'fins_status': r_f.status_code,
+            'fins_data': (r_f.json().get('data') or [])[-1] if r_f.ok else r_f.text[:500],
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/criteria')
 def api_criteria():
     return jsonify({'criteria': CRITERIA, 'labels': CRITERIA_LABELS})
