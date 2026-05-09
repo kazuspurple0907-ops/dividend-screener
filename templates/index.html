@@ -772,7 +772,15 @@ async function runScreen() {
   document.getElementById('screen-count').textContent = '取得中...';
 
   try {
-    const results = await api('/api/screen');   // GET（条件はサーバー固定）
+    const resp = await api('/api/screen');
+    // {warning, data} 形式 or 配列
+    const results = Array.isArray(resp) ? resp : (resp.data || []);
+    if (resp.warning) {
+      toast(resp.warning, 'err');
+      document.getElementById('screen-count').textContent = 'データなし（先に「データ更新」を実行してください）';
+      renderScreenTable([]);
+      return;
+    }
     lastScreenResults = results;
     renderScreenTable(results);
     const allMet = results.filter(r => r.all_conditions).length;

@@ -507,77 +507,53 @@ def fetch_tdnet_alerts(codes):
 
 def run_screening():
     """
-    スクリーニング（無料プラン対応版）
-    1. J-Quants バルクマスター取得（無料プラン対応）
-    2. J-Quants fins/summary を date パラメータで累積取得
-    3. 基本指標でフィルタリング後、Yahoo Finance で価格取得
+    スクリーニング（キャッシュ優先・即時返却版）
+    - 新規API呼び出しは行わない（タイムアウト回避）
+    - ポートフォリオ更新済みの個別キャッシュ（ms_/fn_/rt_）からのみ読み込む
+    - バルクマスターキャッシュ（master_v2.json）があればそれも活用
     """
-    try:
-        master_map = get_master_all()
-    except Exception as e:
-        raise RuntimeError(f'銘柄マスター取得失敗: {e}')
-    try:
-        fins_map = get_fins_all()
-    except Exception:
-        fins_map = {}
-
-    # ── Step1: 基本指標フィルタ（価格不要）──
-    candidates = []
-    for code, info in master_map.items():
-        mkt = info.get('MktNm', '')
-        if not any(m in mkt for m in ['プライム', 'スタンダード', 'Prime', 'Standard']):
-            continue
-        fins = fins_map.get(code) or {}
-        fdiv    = _f(fins.get('FDivAnn'))
-        div_ann = _f(fins.get('DivAnn'))
-        dps     = fdiv if fdiv > 0 else div_ann
-        if dps <= 0:
-            continue  # 無配はスキップ
-        eps  = _f(fins.get('EPS'))
-        bps  = _f(fins.get('BPS'))
-        eq_ar = _f(fins.get('EqAR'))
-        if eps <= 0 or bps <= 0:
-            continue
-        roe = eps / bps * 100
-        if roe < 3:
-            continue  # 極端に低ROEはスキップ
-        candidates.append((code[:4], info, fins, dps))
-
-    # DPS降順で上位300銘柄に絞る（Yahoo取得コスト削減）
-    candidates.sort(key=lambda x: x[3], reverse=True)
-    candidates = candidates[:300]
-
-    # ── Step2: Yahoo Finance で価格並列取得 ──
-    code4s = list({c[0] for c in candidates})
-    rt_cache: dict = {}
-
-    # ポートフォリオ保有分のキャッシュを先に利用
-    for f in os.listdir(CACHE_DIR):
-        if f.startswith('rt_') and f.endswith('.json'):
-            c4 = f[3:-5]
-            try:
-                with open(os.path.join(CACHE_DIR, f)) as fp:
-                    rt_cache[c4] = json.load(fp)
-            except Exception:
-                pass
-
-    uncached = [c for c in code4s if c not in rt_cache]
-    if uncached:
-        with ThreadPoolExecutor(max_workers=10) as ex:
-            futures = {ex.submit(get_realtime_price, c): c for c in uncached}
-            for f in as_completed(futures):
-                c = futures[f]
-                try:
-                    rt_cache[c] = f.result()
-                except Exception:
-                    rt_cache[c] = None
-
-    # ── Step3: 指標計算・フィルタ ──
-    results = []
-    for code4, info, fins, _ in candidates:
+    # 個別銘柄キャッシュを読み込む
+    masters, fins_cache, rt_cache = {}, {}, {}
+    for fname in os.listdir(CACHE_DIR):
+        fpath = os.path.join(CACHE_DIR, fname)
         try:
-            rt = rt_cache.get(code4)
-            m  = build_metrics_from(code4, info, fins, rt=rt)
+            if fname.startswith('ms_') and fname.endswith('.json'):
+                code4 = fname[3:-5]
+                with open(fpath) as fp:
+                    masters[code4] = json.load(fp)
+            elif fname.startswith('fn_') and fname.endswith('.json'):
+                code4 = fname[3:-5]
+                with open(fpath) as fp:
+                    fins_cache[code4] = json.load(fp)
+            elif fname.startswith('rt_') and fname.endswith('.json'):
+                code4 = fname[3:-5]
+                with open(fpath) as fp:
+                    rt_cache[code4] = json.load(fp)
+        except Exception:
+            pass
+
+    # バルクマスターキャッシュがあれば masters に追加（sector/name 情報補完）
+    bulk_cache = os.path.join(CACHE_DIR, 'master_v2.json')
+    if os.path.exists(bulk_cache):
+        try:
+            with open(bulk_cache) as fp:
+                bulk = json.load(fp)
+            for code5, info in bulk.items():
+                code4 = code5[:4]
+                if code4 not in masters:
+                    masters[code4] = info
+        except Exception:
+            pass
+
+    if not masters:
+        return []  # キャッシュが空（ポートフォリオ更新前）
+
+    results = []
+    for code4, info in masters.items():
+        fins = fins_cache.get(code4) or {}
+        rt   = rt_cache.get(code4)
+        try:
+            m = build_metrics_from(code4, info, fins, rt=rt)
             dy = m.get('dividend_yield') or 0
             mc = m.get('market_cap_oku') or 0
             if dy < 2.5 or mc < 250:
@@ -897,9 +873,27 @@ def api_alerts():
 def api_screen():
     try:
         results = run_screening()
+        if not results:
+            return jsonify({'warning': 'まず「保有銘柄」タブで「データ更新」を実行してください。キャッシュが空です。', 'data': []})
         return jsonify(results)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/screen/prefetch', methods=['POST'])
+def api_screen_prefetch():
+    """バルク銘柄マスター＋fins を date別に取得してキャッシュ（バックグラウンド向け）"""
+    def do_fetch():
+        try:
+            get_master_all()   # master_v2.json にキャッシュ
+        except Exception:
+            pass
+        try:
+            get_fins_all()     # fins_v2.json にキャッシュ
+        except Exception:
+            pass
+    t = threading.Thread(target=do_fetch, daemon=True)
+    t.start()
+    return jsonify({'ok': True, 'message': 'バックグラウンドで取得開始しました（完了まで数分かかります）'})
 
 @app.route('/api/recommendations')
 def api_recommendations():
