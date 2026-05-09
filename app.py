@@ -27,8 +27,22 @@ CONFIG_FILE    = os.path.join(DATA_DIR, 'config.json')
 PORTFOLIO_FILE = os.path.join(DATA_DIR, 'portfolio.json')
 JQUANTS_V2     = 'https://api.jquants.com/v2'
 
-# J-Quants 同時リクエスト数を 2 に制限（429 Rate limit 対策）
-_jquants_sem = threading.Semaphore(2)
+# J-Quants レート制限対策
+# - セマフォ: 同時リクエスト数を 2 に制限
+# - レートリミッター: リクエスト間隔を最低 2 秒に保つ（≤30 req/min）
+_jquants_sem  = threading.Semaphore(2)
+_jq_rate_lock = threading.Lock()
+_jq_next_ok   = [0.0]
+_JQ_INTERVAL  = 2.0   # 秒（調整可: 小さいほど速いが 429 リスク増）
+
+def _jq_rate_wait():
+    """J-Quants API リクエスト前にレート間隔を保証（グローバル・直列）"""
+    with _jq_rate_lock:
+        now  = time.time()
+        wait = _jq_next_ok[0] - now
+        if wait > 0:
+            time.sleep(wait)
+        _jq_next_ok[0] = time.time() + _JQ_INTERVAL
 
 # ============================================================
 # スクリーニング条件（固定）
@@ -120,18 +134,20 @@ def get_api_key():
 def jq_get_single(endpoint, code5, api_key, timeout=10):
     """
     個別銘柄 1件取得
-    - セマフォは1リクエスト単位で確保・解放（sleep中は解放して他スレッドを通す）
-    - 429 は最大 2 回リトライ（2s / 5s 待機）
+    - _jq_rate_wait() でグローバル間隔を保証（≤30 req/min）
+    - セマフォで同時リクエスト数を 2 に制限
+    - 429 は最大 2 回リトライ（3s / 7s 待機）
     """
     headers = {'x-api-key': api_key}
     code4 = code5[:4]
     for c in [code5, code4]:
         r = None
         try:
-            for wait in (0, 2, 5):  # 0=初回, 2s=1回目retry, 5s=2回目retry
-                if wait:
-                    time.sleep(wait)  # セマフォ解放済みの状態でsleep
-                with _jquants_sem:
+            for retry_wait in (0, 3, 7):
+                if retry_wait:
+                    time.sleep(retry_wait)
+                _jq_rate_wait()          # グローバルレート間隔を保証
+                with _jquants_sem:       # 同時 2 リクエスト制限
                     r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers,
                                      params={'code': c}, timeout=timeout)
                 if r.status_code != 429:
@@ -291,6 +307,7 @@ def jq_get_bulk(endpoint, params=None):
         for wait in (0, 3, 8, 15):
             if wait:
                 time.sleep(wait)
+            _jq_rate_wait()
             with _jquants_sem:
                 r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers, params=p, timeout=30)
             if r.status_code != 429:
