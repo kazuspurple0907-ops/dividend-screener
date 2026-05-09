@@ -680,9 +680,12 @@ def api_config():
         save_config({'api_key': data.get('api_key', '').strip()})
         return jsonify({'ok': True})
     cfg = load_config()
+    env_key = os.environ.get('JQUANTS_API_KEY', '').strip()
+    cfg_key = cfg.get('api_key', '').strip()
+    active_key = env_key or cfg_key
     return jsonify({
-        'configured':   bool(cfg.get('api_key')),
-        'api_key_hint': cfg.get('api_key','')[:6] + '...' if cfg.get('api_key') else ''
+        'configured':   bool(active_key),
+        'api_key_hint': active_key[:6] + '...' if active_key else ''
     })
 
 @app.route('/api/test_connection')
