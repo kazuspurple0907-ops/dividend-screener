@@ -182,31 +182,94 @@ def _fetch_fins(code4, code5, api_key):
             json.dump(fins, f, ensure_ascii=False)
     return fins
 
-def _fetch_one_stock(code4, api_key):
-    """1銘柄の master / fins / Yahoo価格 を取得（master+fins+yahoo を同時並列）"""
+def _fetch_jquants(code4, api_key):
+    """1銘柄の master + fins を並列取得（Yahoo は別途バッチ取得）"""
     code5 = code4 + '0'
-    with ThreadPoolExecutor(max_workers=3) as inner:
+    with ThreadPoolExecutor(max_workers=2) as inner:
         f_master = inner.submit(_fetch_master, code4, code5, api_key)
         f_fins   = inner.submit(_fetch_fins,   code4, code5, api_key)
-        f_rt     = inner.submit(get_realtime_price, code4)
         master = f_master.result()
         fins   = f_fins.result()
-        rt     = f_rt.result()
-    return code4, master, fins, rt
+    return code4, master, fins
+
+def get_realtime_prices_batch(code4_list):
+    """
+    Yahoo Finance v7 バッチ API で全銘柄の現在株価を一括取得（1リクエスト）。
+    失敗時は個別スクレイピングにフォールバック。
+    """
+    # まずキャッシュ確認（15分以内のものは再利用）
+    rt_map, uncached = {}, []
+    for c in code4_list:
+        cf = os.path.join(CACHE_DIR, f'rt_{c}.json')
+        if os.path.exists(cf) and (time.time() - os.path.getmtime(cf)) < 900:
+            try:
+                with open(cf) as fp:
+                    rt_map[c] = json.load(fp)
+                continue
+            except Exception:
+                pass
+        uncached.append(c)
+
+    if not uncached:
+        return rt_map
+
+    # バッチリクエスト（最大100銘柄ずつ）
+    for chunk_start in range(0, len(uncached), 100):
+        chunk = uncached[chunk_start:chunk_start + 100]
+        symbols = ','.join(f'{c}.T' for c in chunk)
+        try:
+            url = (f'https://query1.finance.yahoo.com/v7/finance/quote'
+                   f'?symbols={symbols}&fields=regularMarketPrice&lang=en-US')
+            r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=15)
+            if r.ok:
+                for q in r.json().get('quoteResponse', {}).get('result', []):
+                    c4 = q.get('symbol', '').replace('.T', '')
+                    price = q.get('regularMarketPrice', 0)
+                    if price and c4:
+                        res = {'price': float(price), 'source': 'yahoo',
+                               'date': datetime.now().strftime('%Y-%m-%d')}
+                        rt_map[c4] = res
+                        with open(os.path.join(CACHE_DIR, f'rt_{c4}.json'), 'w') as fp:
+                            json.dump(res, fp)
+                continue  # バッチ成功 → 次チャンクへ
+        except Exception:
+            pass
+        # バッチ失敗 → このチャンクは個別スクレイピング
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futs = {ex.submit(get_realtime_price, c): c for c in chunk}
+            for f in as_completed(futs):
+                c = futs[f]
+                try:
+                    res = f.result()
+                    if res:
+                        rt_map[c] = res
+                except Exception:
+                    pass
+
+    return rt_map
 
 def get_portfolio_data_parallel(stocks, api_key):
-    """ポートフォリオ全銘柄を並列取得（max 3並列 + セマフォ2で同時J-Quants呼び出し抑制）"""
+    """
+    ポートフォリオ全銘柄のデータ取得
+    - Yahoo価格: バッチAPIで1リクエスト（高速）
+    - J-Quants master/fins: max 3並列 + セマフォ2で制限
+    """
     codes = list({s.get('code', '')[:4] for s in stocks})
+
+    # Yahoo価格を先にバッチ取得（1リクエスト）
+    rt_map = get_realtime_prices_batch(codes)
+
+    # J-Quants データを並列取得
     result = {}
     with ThreadPoolExecutor(max_workers=3) as ex:
-        futures = {ex.submit(_fetch_one_stock, c, api_key): c for c in codes}
+        futures = {ex.submit(_fetch_jquants, c, api_key): c for c in codes}
         for f in as_completed(futures):
             try:
-                code4, master, fins, rt = f.result()
-                result[code4] = (master, fins, rt)
+                code4, master, fins = f.result()
+                result[code4] = (master, fins, rt_map.get(code4))
             except Exception:
                 c = futures[f]
-                result[c] = ({}, {}, None)
+                result[c] = ({}, {}, rt_map.get(c))
     return result
 
 # ============================================================
