@@ -212,15 +212,19 @@ def get_portfolio_data_parallel(stocks, api_key):
 # ============================================================
 
 def jq_get_bulk(endpoint, params=None):
+    """バルク取得（セマフォで同時2リクエスト制限 / 429は最大3回リトライ）"""
     api_key = get_api_key()
     headers = {'x-api-key': api_key}
     all_data = []
     p = dict(params or {})
     while True:
-        r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers, params=p, timeout=30)
-        if r.status_code == 429:
-            time.sleep(5)
+        with _jquants_sem:
             r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers, params=p, timeout=30)
+            for wait in (5, 10, 20):
+                if r.status_code != 429:
+                    break
+                time.sleep(wait)
+                r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers, params=p, timeout=30)
         r.raise_for_status()
         body = r.json()
         chunk = body.get('data', [])
@@ -771,17 +775,13 @@ def api_portfolio_save():
     save_portfolio(request.get_json() or [])
     return jsonify({'ok': True})
 
-@app.route('/api/portfolio/metrics')
-def api_portfolio_metrics():
+def _calc_portfolio_metrics():
+    """ポートフォリオ指標を計算して返す（内部共通ロジック）"""
     portfolio = load_portfolio()
     if not portfolio:
-        return jsonify([])
-
+        return []
     api_key = get_api_key()
-
-    # 並列で個別取得（ポートフォリオ専用 / バルク不要）
     stock_data = get_portfolio_data_parallel(portfolio, api_key)
-
     results = []
     for stock in portfolio:
         code  = stock.get('code', '')
@@ -789,18 +789,15 @@ def api_portfolio_metrics():
         try:
             master, fins, rt = stock_data.get(code4, ({}, {}, None))
             m = build_metrics_from(code4, master, fins, rt=rt)
-
             m['shares']    = stock.get('shares', 0)
             m['avg_price'] = stock.get('avg_price', 0)
             m['memo']      = stock.get('memo', '')
             if stock.get('name') and not m.get('name'):
                 m['name'] = stock['name']
-
-            cp = m.get('current_price') or 0
-            ap = m.get('avg_price')     or 0
-            sh = m.get('shares')        or 0
-            dps = m.get('dps')          or 0
-
+            cp  = m.get('current_price') or 0
+            ap  = m.get('avg_price')     or 0
+            sh  = m.get('shares')        or 0
+            dps = m.get('dps')           or 0
             if cp and ap and sh:
                 m['unrealized_pnl']     = round((cp - ap) * sh, 0)
                 m['unrealized_pnl_pct'] = round((cp - ap) / ap * 100, 1)
@@ -808,14 +805,16 @@ def api_portfolio_metrics():
                 m['annual_dividend']    = round(dps * sh * 0.8, 0)
             if dps and ap:
                 m['yield_at_cost']      = round(dps / ap * 100, 2)
-
             m.update(score_stock(m))
             results.append(m)
         except Exception as e:
-            results.append({'code': code, 'name': stock.get('name',''),
+            results.append({'code': code, 'name': stock.get('name', ''),
                             'error': str(e), **stock})
+    return results
 
-    return jsonify(results)
+@app.route('/api/portfolio/metrics')
+def api_portfolio_metrics():
+    return jsonify(_calc_portfolio_metrics())
 
 @app.route('/api/alerts')
 def api_alerts():
@@ -834,8 +833,7 @@ def api_screen():
 @app.route('/api/recommendations')
 def api_recommendations():
     try:
-        pf_resp    = app.test_client().get('/api/portfolio/metrics')
-        pf_metrics = json.loads(pf_resp.data)
+        pf_metrics = _calc_portfolio_metrics()
         if not pf_metrics:
             return jsonify([])
         screen_results = run_screening()
