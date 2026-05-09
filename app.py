@@ -118,23 +118,25 @@ def get_api_key():
 # ============================================================
 
 def jq_get_single(endpoint, code5, api_key, timeout=10):
-    """個別銘柄 1件取得（セマフォで同時 2 リクエスト制限 / 429 は最大 2 回リトライ）"""
+    """
+    個別銘柄 1件取得
+    - セマフォは1リクエスト単位で確保・解放（sleep中は解放して他スレッドを通す）
+    - 429 は最大 2 回リトライ（2s / 5s 待機）
+    """
     headers = {'x-api-key': api_key}
     code4 = code5[:4]
     for c in [code5, code4]:
+        r = None
         try:
-            with _jquants_sem:
-                r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers,
-                                 params={'code': c}, timeout=timeout)
-                if r.status_code == 429:
-                    time.sleep(5)
+            for wait in (0, 2, 5):  # 0=初回, 2s=1回目retry, 5s=2回目retry
+                if wait:
+                    time.sleep(wait)  # セマフォ解放済みの状態でsleep
+                with _jquants_sem:
                     r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers,
                                      params={'code': c}, timeout=timeout)
-                if r.status_code == 429:
-                    time.sleep(10)
-                    r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers,
-                                     params={'code': c}, timeout=timeout)
-            if r.ok:
+                if r.status_code != 429:
+                    break
+            if r and r.ok:
                 data = r.json().get('data', [])
                 if data:
                     return data
@@ -212,19 +214,24 @@ def get_portfolio_data_parallel(stocks, api_key):
 # ============================================================
 
 def jq_get_bulk(endpoint, params=None):
-    """バルク取得（セマフォで同時2リクエスト制限 / 429は最大3回リトライ）"""
+    """
+    バルク取得（セマフォで同時2リクエスト制限）
+    - sleep中はセマフォを解放
+    - 429は最大3回リトライ（3s / 8s / 15s 待機）
+    """
     api_key = get_api_key()
     headers = {'x-api-key': api_key}
     all_data = []
     p = dict(params or {})
     while True:
-        with _jquants_sem:
-            r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers, params=p, timeout=30)
-            for wait in (5, 10, 20):
-                if r.status_code != 429:
-                    break
+        r = None
+        for wait in (0, 3, 8, 15):
+            if wait:
                 time.sleep(wait)
+            with _jquants_sem:
                 r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers, params=p, timeout=30)
+            if r.status_code != 429:
+                break
         r.raise_for_status()
         body = r.json()
         chunk = body.get('data', [])
