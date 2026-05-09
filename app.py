@@ -157,10 +157,11 @@ def _fetch_one_stock(code4, api_key):
         with open(cache_master) as f:
             master = json.load(f)
     else:
-        rows = jq_get_single('/equities/master', code5, api_key)
+        rows = jq_get_single('/equities/master', code5, api_key, timeout=15)
         master = rows[-1] if rows else {}
-        with open(cache_master, 'w') as f:
-            json.dump(master, f, ensure_ascii=False)
+        if master:  # 空データはキャッシュしない
+            with open(cache_master, 'w') as f:
+                json.dump(master, f, ensure_ascii=False)
 
     # ---- fins（6h キャッシュ）----
     cache_fins = os.path.join(CACHE_DIR, f'fn_{code4}.json')
@@ -168,10 +169,11 @@ def _fetch_one_stock(code4, api_key):
         with open(cache_fins) as f:
             fins = json.load(f)
     else:
-        rows = jq_get_single('/fins/summary', code5, api_key)
+        rows = jq_get_single('/fins/summary', code5, api_key, timeout=15)
         fins = sorted(rows, key=lambda x: x.get('DiscDate', ''))[-1] if rows else {}
-        with open(cache_fins, 'w') as f:
-            json.dump(fins, f, ensure_ascii=False)
+        if fins:  # 空データはキャッシュしない
+            with open(cache_fins, 'w') as f:
+                json.dump(fins, f, ensure_ascii=False)
 
     # ---- Yahoo Finance リアルタイム価格（15min キャッシュ）----
     rt = get_realtime_price(code4)
@@ -179,10 +181,10 @@ def _fetch_one_stock(code4, api_key):
     return code4, master, fins, rt
 
 def get_portfolio_data_parallel(stocks, api_key):
-    """ポートフォリオ全銘柄を並列取得（max 12並列）"""
+    """ポートフォリオ全銘柄を並列取得（max 4並列：レート制限対策）"""
     codes = list({s.get('code', '')[:4] for s in stocks})
     result = {}
-    with ThreadPoolExecutor(max_workers=12) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         futures = {ex.submit(_fetch_one_stock, c, api_key): c for c in codes}
         for f in as_completed(futures):
             try:
@@ -699,6 +701,25 @@ def api_test():
         return jsonify({'ok': True, 'message': f'接続成功: {info.get("CoName","") or "J-Quants"} のデータを取得できました'})
     except Exception as e:
         return jsonify({'ok': False, 'message': str(e)}), 400
+
+@app.route('/api/cache/clear', methods=['POST'])
+def api_cache_clear():
+    """空またはすべてのキャッシュを削除"""
+    mode = (request.get_json() or {}).get('mode', 'empty')
+    removed = 0
+    for f in os.listdir(CACHE_DIR):
+        fpath = os.path.join(CACHE_DIR, f)
+        if mode == 'all':
+            os.remove(fpath); removed += 1
+        elif mode == 'empty':
+            try:
+                with open(fpath) as fp:
+                    d = json.load(fp)
+                if not d:
+                    os.remove(fpath); removed += 1
+            except Exception:
+                os.remove(fpath); removed += 1
+    return jsonify({'ok': True, 'removed': removed})
 
 @app.route('/api/debug/stock')
 def api_debug_stock():
