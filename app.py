@@ -10,6 +10,7 @@ import time
 import csv
 import io
 import re
+import threading
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,6 +26,9 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 CONFIG_FILE    = os.path.join(DATA_DIR, 'config.json')
 PORTFOLIO_FILE = os.path.join(DATA_DIR, 'portfolio.json')
 JQUANTS_V2     = 'https://api.jquants.com/v2'
+
+# J-Quants 同時リクエスト数を 2 に制限（429 Rate limit 対策）
+_jquants_sem = threading.Semaphore(2)
 
 # ============================================================
 # スクリーニング条件（固定）
@@ -114,17 +118,22 @@ def get_api_key():
 # ============================================================
 
 def jq_get_single(endpoint, code5, api_key, timeout=10):
-    """個別銘柄 1件取得"""
+    """個別銘柄 1件取得（セマフォで同時 2 リクエスト制限 / 429 は最大 2 回リトライ）"""
     headers = {'x-api-key': api_key}
     code4 = code5[:4]
     for c in [code5, code4]:
         try:
-            r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers,
-                             params={'code': c}, timeout=timeout)
-            if r.status_code == 429:
-                time.sleep(3)
+            with _jquants_sem:
                 r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers,
                                  params={'code': c}, timeout=timeout)
+                if r.status_code == 429:
+                    time.sleep(5)
+                    r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers,
+                                     params={'code': c}, timeout=timeout)
+                if r.status_code == 429:
+                    time.sleep(10)
+                    r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers,
+                                     params={'code': c}, timeout=timeout)
             if r.ok:
                 data = r.json().get('data', [])
                 if data:
@@ -184,10 +193,10 @@ def _fetch_one_stock(code4, api_key):
     return code4, master, fins, rt
 
 def get_portfolio_data_parallel(stocks, api_key):
-    """ポートフォリオ全銘柄を並列取得（max 4並列：レート制限対策）"""
+    """ポートフォリオ全銘柄を並列取得（max 3並列 + セマフォ2で同時J-Quants呼び出し抑制）"""
     codes = list({s.get('code', '')[:4] for s in stocks})
     result = {}
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    with ThreadPoolExecutor(max_workers=3) as ex:
         futures = {ex.submit(_fetch_one_stock, c, api_key): c for c in codes}
         for f in as_completed(futures):
             try:
