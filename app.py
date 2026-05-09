@@ -147,37 +147,40 @@ def get_cached(key, fetch_fn, ttl=3600):
 # ポートフォリオ用：個別銘柄データを並列取得
 # ============================================================
 
-def _fetch_one_stock(code4, api_key):
-    """1銘柄の master / fins / Yahoo価格 を取得（並列実行単位）"""
-    code5 = code4 + '0'
-
-    # ---- master（24h キャッシュ）----
+def _fetch_master(code4, code5, api_key):
     cache_master = os.path.join(CACHE_DIR, f'ms_{code4}.json')
     if os.path.exists(cache_master) and (time.time() - os.path.getmtime(cache_master)) < 86400:
         with open(cache_master) as f:
-            master = json.load(f)
-    else:
-        rows = jq_get_single('/equities/master', code5, api_key, timeout=15)
-        master = rows[-1] if rows else {}
-        if master:  # 空データはキャッシュしない
-            with open(cache_master, 'w') as f:
-                json.dump(master, f, ensure_ascii=False)
+            return json.load(f)
+    rows = jq_get_single('/equities/master', code5, api_key, timeout=15)
+    master = rows[-1] if rows else {}
+    if master:
+        with open(cache_master, 'w') as f:
+            json.dump(master, f, ensure_ascii=False)
+    return master
 
-    # ---- fins（6h キャッシュ）----
+def _fetch_fins(code4, code5, api_key):
     cache_fins = os.path.join(CACHE_DIR, f'fn_{code4}.json')
     if os.path.exists(cache_fins) and (time.time() - os.path.getmtime(cache_fins)) < 21600:
         with open(cache_fins) as f:
-            fins = json.load(f)
-    else:
-        rows = jq_get_single('/fins/summary', code5, api_key, timeout=15)
-        fins = sorted(rows, key=lambda x: x.get('DiscDate', ''))[-1] if rows else {}
-        if fins:  # 空データはキャッシュしない
-            with open(cache_fins, 'w') as f:
-                json.dump(fins, f, ensure_ascii=False)
+            return json.load(f)
+    rows = jq_get_single('/fins/summary', code5, api_key, timeout=15)
+    fins = sorted(rows, key=lambda x: x.get('DiscDate', ''))[-1] if rows else {}
+    if fins:
+        with open(cache_fins, 'w') as f:
+            json.dump(fins, f, ensure_ascii=False)
+    return fins
 
-    # ---- Yahoo Finance リアルタイム価格（15min キャッシュ）----
-    rt = get_realtime_price(code4)
-
+def _fetch_one_stock(code4, api_key):
+    """1銘柄の master / fins / Yahoo価格 を取得（master+fins+yahoo を同時並列）"""
+    code5 = code4 + '0'
+    with ThreadPoolExecutor(max_workers=3) as inner:
+        f_master = inner.submit(_fetch_master, code4, code5, api_key)
+        f_fins   = inner.submit(_fetch_fins,   code4, code5, api_key)
+        f_rt     = inner.submit(get_realtime_price, code4)
+        master = f_master.result()
+        fins   = f_fins.result()
+        rt     = f_rt.result()
     return code4, master, fins, rt
 
 def get_portfolio_data_parallel(stocks, api_key):
