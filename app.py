@@ -33,7 +33,9 @@ JQUANTS_V2     = 'https://api.jquants.com/v2'
 _jquants_sem  = threading.Semaphore(2)
 _jq_rate_lock = threading.Lock()
 _jq_next_ok   = [0.0]
-_JQ_INTERVAL  = 2.0   # 秒（調整可: 小さいほど速いが 429 リスク増）
+_JQ_INTERVAL  = 2.1   # 秒（調整可: 小さいほど速いが 429 リスク増）
+_refresh_lock = threading.Lock()
+_refresh_running = [False]
 
 def _jq_rate_wait():
     """J-Quants API リクエスト前にレート間隔を保証（グローバル・直列）"""
@@ -976,17 +978,25 @@ def _calc_portfolio_metrics():
     return results
 
 def _do_portfolio_refresh(stocks):
-    """バックグラウンドでJ-Quants + Yahoo価格を取得してキャッシュ更新"""
+    """バックグラウンドでJ-Quants + Yahoo価格を取得してキャッシュ更新（重複実行防止）"""
+    with _refresh_lock:
+        if _refresh_running[0]:
+            return
+        _refresh_running[0] = True
     try:
         api_key = get_api_key()
     except Exception:
+        _refresh_running[0] = False
         return
-    # Yahoo価格を先にバッチ取得
-    codes = list({s.get('code','')[:4] for s in stocks})
-    get_realtime_prices_batch(codes)
-    # J-Quantsデータを並列取得（レートリミッター適用済み）
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        list(ex.map(lambda c: _fetch_jquants(c, api_key), codes))
+    try:
+        # Yahoo価格を先にバッチ取得
+        codes = list({s.get('code','')[:4] for s in stocks})
+        get_realtime_prices_batch(codes)
+        # J-Quantsデータを並列取得（レートリミッター適用済み）
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            list(ex.map(lambda c: _fetch_jquants(c, api_key), codes))
+    finally:
+        _refresh_running[0] = False
 
 @app.route('/api/portfolio/metrics')
 def api_portfolio_metrics():
@@ -999,6 +1009,8 @@ def api_portfolio_metrics_refresh():
     portfolio = load_portfolio()
     if not portfolio:
         return jsonify({'ok': False, 'message': 'ポートフォリオが空です'}), 400
+    if _refresh_running[0]:
+        return jsonify({'ok': True, 'message': '更新中です（重複実行スキップ）', 'total': len(portfolio)}), 200
     threading.Thread(target=_do_portfolio_refresh, args=(portfolio,), daemon=True).start()
     return jsonify({'ok': True, 'message': 'バックグラウンドで更新開始', 'total': len(portfolio)}), 202
 
