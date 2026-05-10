@@ -913,15 +913,8 @@ def api_portfolio_get():
 def api_portfolio_save():
     data = request.get_json() or []
     save_portfolio(data)
-    # ポートフォリオ更新後にバックグラウンドでキャッシュをプリウォーム
-    def _warmup(stocks):
-        time.sleep(2)
-        try:
-            api_key = get_api_key()
-            get_portfolio_data_parallel(stocks, api_key)
-        except Exception:
-            pass
-    threading.Thread(target=_warmup, args=(data,), daemon=True).start()
+    # ポートフォリオ更新後にバックグラウンドでキャッシュをプリウォーム（重複防止）
+    threading.Thread(target=_do_portfolio_refresh, args=(data,), daemon=True).start()
     return jsonify({'ok': True, 'warming': True})
 
 def _build_metrics_from_cache(stock):
