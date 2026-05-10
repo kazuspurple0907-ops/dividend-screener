@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""高配当株スクリードングアプリ - J-Quants API v2対応"""
+"""高配当株スクリーニングアプリ - J-Quants API v2対応"""
 
 from flask import Flask, jsonify, request, render_template
 import requests
@@ -134,7 +134,7 @@ def get_api_key():
 def jq_get_single(endpoint, code5, api_key, timeout=10):
     """
     個別銘柄 1件取得
-    - _jq_rate_wait() でグローバc��間隔を保証（≤30 req/min）
+    - _jq_rate_wait() でグローバル間隔を保証（≤30 req/min）
     - セマフォで同時リクエスト数を 2 に制限
     - 429 は最大 2 回リトライ（3s / 7s 待機）
     """
@@ -146,7 +146,7 @@ def jq_get_single(endpoint, code5, api_key, timeout=10):
             for retry_wait in (0, 3, 7):
                 if retry_wait:
                     time.sleep(retry_wait)
-                _jq_rate_wait()          # グローバc��レート間隔を保証
+                _jq_rate_wait()          # グローバルレート間隔を保証
                 with _jquants_sem:       # 同時 2 リクエスト制限
                     r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers,
                                      params={'code': c}, timeout=timeout)
@@ -228,7 +228,7 @@ def get_realtime_prices_batch(code4_list):
     if not uncached:
         return rt_map
 
-    # yfinance バッチe��得（100銘柄ずつ）
+    # yfinance バッチ取得（100銘柄ずつ）
     success_codes = set()
     for chunk_start in range(0, len(uncached), 100):
         chunk = uncached[chunk_start:chunk_start + 100]
@@ -420,7 +420,7 @@ def build_metrics_from(code4, master, fins, rt=None, adj_c_fallback=0):
 
     dps = fdiv if fdiv > 0 else div_ann
 
-    # 株価ﺚYahoo Finance 優先
+    # 株価：Yahoo Finance 優先
     if rt and rt.get('price', 0) > 0:
         adj_c = rt['price']
         price_source = 'リアルタイム'
@@ -510,14 +510,14 @@ def score_stock(m):
 
     if roe is not None:
         if   roe >= 10:           score += 15; reasons.append(('ok',   f'ROE優秀 {roe}%'))
-        elif conds.get('roe');    score += 10; reasons.append(('ok',   f'ROE良好 {roe}%'))
+        elif conds.get('roe'):    score += 10; reasons.append(('ok',   f'ROE良好 {roe}%'))
         elif roe >= 5:            score += 5;  reasons.append(('warn', f'ROE普通 {roe}%'))
         else:                                   reasons.append(('ng',   f'ROE低い {roe}%'))
 
     if per is not None:
         if   conds.get('per') and per >= 10: score += 10; reasons.append(('ok',   f'PER適正 {per}倍'))
         elif per < 10:                       score += 7;  reasons.append(('warn', f'PER割安 {per}倍 — 業績確認'))
-        elif conds.get('per');               score += 8;  reasons.append(('ok',   f'PER良好 {per}倍'))
+        elif conds.get('per'):               score += 8;  reasons.append(('ok',   f'PER良好 {per}倍'))
         elif per <= 20:                      score += 5;  reasons.append(('warn', f'PERやや高め {per}倍'))
         else:                                             reasons.append(('ng',   f'PER割高 {per}倍'))
 
@@ -683,7 +683,7 @@ def get_recommendations(portfolio_metrics, screen_results):
         if gain_pct >= 50:
             continue
 
-        # ② 取得時の想定利回りが高く、値下がりで利回りが低下したものは除外
+        # ② 取得時の想定利回りが高く、値上がりで利回りが低下したものは除外
         #    （配当は変わっていないが株価上昇で利回りが相対的に低下）
         yield_at_cost = (dps / avg_p * 100) if avg_p > 0 else 0
         cur_yield     = pm.get('dividend_yield') or 0
@@ -697,7 +697,7 @@ def get_recommendations(portfolio_metrics, screen_results):
         sector = pm.get('sector', '')
         code   = pm.get('code', '')
 
-        # 現在の坴間配当収入
+        # 現在の年間配当収入
         annual_div_now = round(dps * shares * 0.8, 0) if dps and shares else 0
         # 売却想定金額（現在値 × 株数）
         sell_amount = cur_p * shares if cur_p and shares else avg_p * shares
@@ -734,7 +734,7 @@ def get_recommendations(portfolio_metrics, screen_results):
             })
             candidates.append(cand)
 
-        # 条件合致数が現在より多ぅ候補に絞る
+        # 条件合致数が現在より多い候補に絞る
         candidates = [c for c in candidates if (c.get('conditions_met') or 0) > pf_met][:3]
         if not candidates:
             continue
@@ -981,7 +981,7 @@ def _do_portfolio_refresh(stocks):
         api_key = get_api_key()
     except Exception:
         return
-    # Yahoo価格を先にバッチe��得
+    # Yahoo価格を先にバッチ取得
     codes = list({s.get('code','')[:4] for s in stocks})
     get_realtime_prices_batch(codes)
     # J-Quantsデータを並列取得（レートリミッター適用済み）
@@ -1033,7 +1033,7 @@ def api_screen():
 
 @app.route('/api/screen/prefetch', methods=['POST'])
 def api_screen_prefetch():
-    """バルク銘柄マスター＋fins を date別に取得してキャッシュ（バックグラウンド向ぇ）"""
+    """バルク銘柄マスター＋fins を date別に取得してキャッシュ（バックグラウンド向け）"""
     def do_fetch():
         try:
             get_master_all()   # master_v2.json にキャッシュ
@@ -1074,7 +1074,7 @@ def api_import_csv():
         for r in result:
             existing_map[r['code']] = r
         merged = list(existing_map.values())
-        save_portfolio((merged)
+        save_portfolio(merged)
         return jsonify({'ok': True, 'imported': len(result), 'total': len(merged)})
     except Exception as e:
         return jsonify({'ok': False, 'message': str(e)}), 500
@@ -1092,7 +1092,7 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     host = os.environ.get('HOST', '0.0.0.0')   # LAN/クラウド両対応
     print('=' * 55)
-    print(f'  高配当株スクリードングアプリ (J-Quants v2)')
+    print(f'  高配当株スクリーニングアプリ (J-Quants v2)')
     print(f'  http://localhost:{port} を開いてください')
     print('=' * 55)
     app.run(debug=False, port=port, host=host)
