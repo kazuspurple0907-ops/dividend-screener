@@ -905,6 +905,29 @@ def api_debug_stock():
 def api_criteria():
     return jsonify({'criteria': CRITERIA, 'labels': CRITERIA_LABELS})
 
+@app.route('/api/debug/fetch_one')
+def api_debug_fetch_one():
+    """1銘柄を同期的にフェッチしてキャッシュ書き込みまでテスト"""
+    code = request.args.get('code', '4595')
+    code4 = code[:4]
+    try:
+        api_key = get_api_key()
+        code4_r, master, fins = _fetch_jquants(code4, api_key)
+        fn_path = os.path.join(CACHE_DIR, f'fn_{code4}.json')
+        ms_path = os.path.join(CACHE_DIR, f'ms_{code4}.json')
+        return jsonify({
+            'code': code4_r,
+            'master_keys': list(master.keys())[:5] if master else [],
+            'fins_keys': list(fins.keys())[:5] if fins else [],
+            'fn_file_exists': os.path.exists(fn_path),
+            'ms_file_exists': os.path.exists(ms_path),
+            'dps': fins.get('DivAnn') or fins.get('FDivAnn'),
+            'eps': fins.get('EPS'),
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()[-500:]}), 500
+
 @app.route('/api/debug/errors')
 def api_debug_errors():
     """リフレッシュエラーログを返す"""
