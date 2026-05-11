@@ -931,17 +931,31 @@ def api_debug_fetch_one():
 @app.route('/api/debug/errors')
 def api_debug_errors():
     """リフレッシュエラーログを返す"""
-    err_file = os.path.join(DATA_DIR, 'refresh_errors.txt')
+    err_file  = os.path.join(DATA_DIR, 'refresh_errors.txt')
     test_file = os.path.join(CACHE_DIR, '_write_test.txt')
+    log_file  = os.path.join(DATA_DIR, 'refresh_log.txt')
+    cache_files = os.listdir(CACHE_DIR) if os.path.exists(CACHE_DIR) else []
     result = {
-        'cache_dir': CACHE_DIR,
+        'cache_dir':        CACHE_DIR,
         'cache_dir_exists': os.path.exists(CACHE_DIR),
         'write_test_exists': os.path.exists(test_file),
-        'refresh_running': _refresh_running[0],
-        'errors': open(err_file).read() if os.path.exists(err_file) else 'none',
-        'fn_files': len([f for f in os.listdir(CACHE_DIR) if f.startswith('fn_')]) if os.path.exists(CACHE_DIR) else -1,
+        'refresh_running':  _refresh_running[0],
+        'errors':           open(err_file).read() if os.path.exists(err_file) else 'none',
+        'fn_files':         len([f for f in cache_files if f.startswith('fn_')]),
+        'ms_files':         len([f for f in cache_files if f.startswith('ms_')]),
+        'rt_files':         len([f for f in cache_files if f.startswith('rt_')]),
+        'log_tail':         open(log_file).read()[-800:] if os.path.exists(log_file) else 'none',
     }
     return jsonify(result)
+
+@app.route('/api/debug/refresh_log')
+def api_debug_refresh_log():
+    """リフレッシュ詳細ログを返す"""
+    log_file = os.path.join(DATA_DIR, 'refresh_log.txt')
+    if os.path.exists(log_file):
+        content = open(log_file).read()
+        return jsonify({'log': content[-5000:], 'total_bytes': len(content)})
+    return jsonify({'log': 'no log yet', 'total_bytes': 0})
 
 @app.route('/api/portfolio', methods=['GET'])
 def api_portfolio_get():
@@ -1014,37 +1028,135 @@ def _do_portfolio_refresh(stocks):
         if _refresh_running[0]:
             return
         _refresh_running[0] = True
+
+    log_file = os.path.join(DATA_DIR, 'refresh_log.txt')
+    try:
+        open(log_file, 'w').close()
+    except Exception:
+        pass
+
+    def rlog(msg):
+        try:
+            with open(log_file, 'a') as lf:
+                lf.write(f'[{datetime.now().strftime("%H:%M:%S")}] {msg}\n')
+        except Exception:
+            pass
+
     try:
         api_key = get_api_key()
-    except Exception:
+    except Exception as e:
+        rlog(f'api_key error: {e}')
         _refresh_running[0] = False
         return
+
     try:
-        codes = list({s.get('code','')[:4] for s in stocks})
+        target_codes = list({s.get('code', '')[:4] for s in stocks})
+        target_set   = set(target_codes)
+        rlog(f'start: {len(target_codes)} codes')
+
         # キャッシュ書き込みテスト
         test_file = os.path.join(CACHE_DIR, '_write_test.txt')
         with open(test_file, 'w') as f:
             f.write('ok')
-        # J-Quantsデータを先に取得（DPS/PER/ROEに必要）
-        errors = []
-        for c in codes:
+
+        headers = {'x-api-key': api_key}
+
+        # ── 1. master (個別コード) ──────────────────────────────────
+        ms_ok = 0
+        for c in target_codes:
+            ms_path = os.path.join(CACHE_DIR, f'ms_{c}.json')
+            if os.path.exists(ms_path) and (time.time() - os.path.getmtime(ms_path)) < 86400:
+                ms_ok += 1
+                continue
             try:
-                _fetch_jquants(c, api_key)
+                code5 = c + '0'
+                _jq_rate_wait()
+                with _jquants_sem:
+                    r = requests.get(f'{JQUANTS_V2}/equities/master',
+                                     headers=headers, params={'code': code5}, timeout=15)
+                if r.ok:
+                    rows = r.json().get('data', [])
+                    if rows:
+                        with open(ms_path, 'w') as f:
+                            json.dump(rows[-1], f, ensure_ascii=False)
+                        ms_ok += 1
+                    else:
+                        rlog(f'ms {c}: empty (status={r.status_code})')
+                else:
+                    rlog(f'ms {c}: http {r.status_code}')
             except Exception as e:
-                errors.append(f'{c}: {e}')
-        if errors:
-            with open(os.path.join(DATA_DIR, 'refresh_errors.txt'), 'w') as f:
-                f.write('\n'.join(errors[:10]))
-        # Yahoo価格はJ-Quants完了後にバッチ取得（現在株価のみ）
+                rlog(f'ms {c}: exc {e}')
+        rlog(f'master done: {ms_ok}/{len(target_codes)}')
+
+        # ── 2. fins (日付別バルク → 個別 fn_ ファイルに書き込み) ───
+        fins_map = {}
+        # 有効な既存キャッシュをロード
+        for c in target_codes:
+            fp = os.path.join(CACHE_DIR, f'fn_{c}.json')
+            if os.path.exists(fp) and (time.time() - os.path.getmtime(fp)) < 21600:
+                try:
+                    with open(fp) as f:
+                        fins_map[c] = json.load(f)
+                except Exception:
+                    pass
+        rlog(f'fins pre-loaded from cache: {len(fins_map)}/{len(target_codes)}')
+
+        missing = [c for c in target_codes if c not in fins_map]
+        if missing:
+            rlog(f'fins missing: {len(missing)}, fetching by date...')
+            for delta in range(60):
+                if not missing:
+                    break
+                d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
+                try:
+                    _jq_rate_wait()
+                    with _jquants_sem:
+                        r = requests.get(f'{JQUANTS_V2}/fins/summary',
+                                         headers=headers, params={'date': d}, timeout=20)
+                    if r.status_code == 429:
+                        rlog(f'fins {d}: 429, sleep 10s')
+                        time.sleep(10)
+                        continue
+                    if not r.ok:
+                        rlog(f'fins {d}: http {r.status_code}')
+                        continue
+                    rows = r.json().get('data', [])
+                    hits = 0
+                    for row in rows:
+                        code5_r = row.get('Code', '')
+                        code4_r = code5_r[:4]
+                        if code4_r in target_set and code4_r not in fins_map:
+                            fins_map[code4_r] = row
+                            fn_path = os.path.join(CACHE_DIR, f'fn_{code4_r}.json')
+                            with open(fn_path, 'w') as f:
+                                json.dump(row, f, ensure_ascii=False)
+                            missing = [c for c in missing if c != code4_r]
+                            hits += 1
+                    rlog(f'fins {d}: rows={len(rows)} hits={hits} remaining={len(missing)}')
+                except Exception as e:
+                    rlog(f'fins {d}: exc {e}')
+        rlog(f'fins done: {len(fins_map)}/{len(target_codes)}')
+        if missing:
+            rlog(f'fins still missing: {missing[:10]}')
+
+        # ── 3. Yahoo 株価（バッチ）─────────────────────────────────
         try:
-            get_realtime_prices_batch(codes)
-        except Exception:
-            pass
+            rlog('prices start')
+            get_realtime_prices_batch(target_codes)
+            rt_count = sum(1 for c in target_codes
+                           if os.path.exists(os.path.join(CACHE_DIR, f'rt_{c}.json')))
+            rlog(f'prices done: {rt_count}/{len(target_codes)} cached')
+        except Exception as e:
+            rlog(f'prices exc: {e}')
+
     except Exception as e:
+        import traceback
+        rlog(f'OUTER ERROR: {e}\n{traceback.format_exc()[-300:]}')
         with open(os.path.join(DATA_DIR, 'refresh_errors.txt'), 'w') as f:
             f.write(f'OUTER: {e}')
     finally:
         _refresh_running[0] = False
+        rlog('=== refresh end ===')
 
 @app.route('/api/portfolio/metrics')
 def api_portfolio_metrics():
