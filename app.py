@@ -982,12 +982,15 @@ def _do_portfolio_refresh(stocks):
         _refresh_running[0] = False
         return
     try:
-        # Yahoo価格を先にバッチ取得
         codes = list({s.get('code','')[:4] for s in stocks})
-        get_realtime_prices_batch(codes)
-        # J-Quantsデータを並列取得（レートリミッター適用済み）
+        # J-Quantsデータを先に取得（DPS/PER/ROEに必要）
         with ThreadPoolExecutor(max_workers=3) as ex:
             list(ex.map(lambda c: _fetch_jquants(c, api_key), codes))
+        # Yahoo価格はJ-Quants完了後にバッチ取得（現在株価のみ）
+        try:
+            get_realtime_prices_batch(codes)
+        except Exception:
+            pass
     finally:
         _refresh_running[0] = False
 
