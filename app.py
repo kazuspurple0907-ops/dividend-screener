@@ -1078,18 +1078,21 @@ def _do_portfolio_refresh(stocks):
         except Exception as e:
             rlog(f'master bulk error: {e}')
 
-        # ── 2. fins (コード別クエリ・Sequential・429対応) ────────────
-        fins_ok = 0
+        # ── 2. fins (J-Quants 1-shot → 429なら yfinance fallback) ────
+        fins_ok_jq = 0
+        fins_ok_yf = 0
         consec_429 = 0
-        for i, c in enumerate(target_codes):
+        use_yf = False   # J-Quantsで3連続429が来たらyfinanceに切り替え
+
+        for c in target_codes:
             fn_path = os.path.join(CACHE_DIR, f'fn_{c}.json')
             if os.path.exists(fn_path) and (time.time() - os.path.getmtime(fn_path)) < 21600:
-                fins_ok += 1
-                consec_429 = 0
+                fins_ok_jq += 1
                 continue
-            code5 = c + '0'
-            success = False
-            for attempt in range(3):   # 最大3回リトライ
+
+            jq_ok = False
+            if not use_yf:
+                code5 = c + '0'
                 try:
                     _jq_rate_wait()
                     with _jquants_sem:
@@ -1097,35 +1100,66 @@ def _do_portfolio_refresh(stocks):
                                          headers=headers, params={'code': code5}, timeout=15)
                     if r.status_code == 429:
                         consec_429 += 1
-                        wait_s = 60 * attempt + 60   # 60s, 120s, 180s
-                        rlog(f'fins {c}: 429 (attempt {attempt+1}), sleep {wait_s}s (consec={consec_429})')
-                        if consec_429 >= 5:
-                            rlog('5 consecutive 429s — aborting fins fetch')
-                            break
-                        time.sleep(wait_s)
-                        continue
-                    consec_429 = 0
-                    if r.ok:
-                        rows = r.json().get('data', [])
-                        if rows:
-                            fins = sorted(rows, key=lambda x: x.get('DiscDate', ''))[-1]
-                            with open(fn_path, 'w') as f:
-                                json.dump(fins, f, ensure_ascii=False)
-                            fins_ok += 1
-                            success = True
-                        else:
-                            rlog(f'fins {c}: 200 but empty data')
+                        rlog(f'fins {c}: JQ 429 (consec={consec_429})')
+                        if consec_429 >= 3:
+                            rlog('3 consecutive 429s — switching to yfinance fallback')
+                            use_yf = True
                     else:
-                        rlog(f'fins {c}: http {r.status_code}')
-                    break
+                        consec_429 = 0
+                        if r.ok:
+                            rows = r.json().get('data', [])
+                            if rows:
+                                fins = sorted(rows, key=lambda x: x.get('DiscDate', ''))[-1]
+                                with open(fn_path, 'w') as f:
+                                    json.dump(fins, f, ensure_ascii=False)
+                                fins_ok_jq += 1
+                                jq_ok = True
+                            else:
+                                rlog(f'fins {c}: JQ empty data')
+                        else:
+                            rlog(f'fins {c}: JQ http {r.status_code}')
                 except Exception as e:
-                    rlog(f'fins {c}: exc {e}')
-                    break
-            if consec_429 >= 5:
-                break
-            if not success and attempt == 0:
-                pass  # already logged above
-        rlog(f'fins done: {fins_ok}/{len(target_codes)}')
+                    rlog(f'fins {c}: JQ exc {e}')
+
+            # yfinance fallback (J-Quants失敗 or スロットル中)
+            if not jq_ok:
+                try:
+                    import yfinance as yf
+                    info = yf.Ticker(f'{c}.T').info
+                    div_ann  = float(info.get('dividendRate') or 0)
+                    eps      = float(info.get('trailingEps')  or 0)
+                    bps      = float(info.get('bookValue')    or 0)
+                    sh_out   = float(info.get('sharesOutstanding') or 0)
+                    payout   = float(info.get('payoutRatio')  or 0)
+                    tot_rev  = float(info.get('totalRevenue') or 0)
+                    op_inc   = float(info.get('operatingIncome') or 0)
+                    tot_eq   = float(info.get('totalStockholdersEquity') or 0)
+                    tot_ast  = float(info.get('totalAssets')  or 1)
+                    fins_yf = {
+                        'Code':           c + '0',
+                        'DiscDate':       datetime.now().strftime('%Y-%m-%d'),
+                        'EPS':            eps,
+                        'BPS':            bps,
+                        'Sales':          tot_rev,
+                        'OP':             op_inc,
+                        'EqAR':           tot_eq / tot_ast if tot_ast else 0,
+                        'DivAnn':         div_ann,
+                        'FDivAnn':        0,
+                        'PayoutRatioAnn': payout,
+                        'ShOutFY':        sh_out,
+                        'Source':         'yfinance',
+                    }
+                    if eps or bps or div_ann:
+                        with open(fn_path, 'w') as f:
+                            json.dump(fins_yf, f, ensure_ascii=False)
+                        fins_ok_yf += 1
+                        rlog(f'fins {c}: YF ok dps={div_ann} eps={eps} bps={bps}')
+                    else:
+                        rlog(f'fins {c}: YF no data (empty info)')
+                except Exception as e:
+                    rlog(f'fins {c}: YF exc {e}')
+
+        rlog(f'fins done: JQ={fins_ok_jq} YF={fins_ok_yf}/{len(target_codes)}')
 
         # ── 3. Yahoo 株価（バッチ）─────────────────────────────────
         try:
