@@ -1078,56 +1078,54 @@ def _do_portfolio_refresh(stocks):
         except Exception as e:
             rlog(f'master bulk error: {e}')
 
-        # ── 2. fins (日付別バルク → 個別 fn_ ファイルに書き込み) ───
-        fins_map = {}
-        # 有効な既存キャッシュをロード
-        for c in target_codes:
-            fp = os.path.join(CACHE_DIR, f'fn_{c}.json')
-            if os.path.exists(fp) and (time.time() - os.path.getmtime(fp)) < 21600:
-                try:
-                    with open(fp) as f:
-                        fins_map[c] = json.load(f)
-                except Exception:
-                    pass
-        rlog(f'fins pre-loaded from cache: {len(fins_map)}/{len(target_codes)}')
-
-        missing = [c for c in target_codes if c not in fins_map]
-        if missing:
-            rlog(f'fins missing: {len(missing)}, fetching by date...')
-            for delta in range(60):
-                if not missing:
-                    break
-                d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
+        # ── 2. fins (コード別クエリ・Sequential・429対応) ────────────
+        fins_ok = 0
+        consec_429 = 0
+        for i, c in enumerate(target_codes):
+            fn_path = os.path.join(CACHE_DIR, f'fn_{c}.json')
+            if os.path.exists(fn_path) and (time.time() - os.path.getmtime(fn_path)) < 21600:
+                fins_ok += 1
+                consec_429 = 0
+                continue
+            code5 = c + '0'
+            success = False
+            for attempt in range(3):   # 最大3回リトライ
                 try:
                     _jq_rate_wait()
                     with _jquants_sem:
                         r = requests.get(f'{JQUANTS_V2}/fins/summary',
-                                         headers=headers, params={'date': d}, timeout=20)
+                                         headers=headers, params={'code': code5}, timeout=15)
                     if r.status_code == 429:
-                        rlog(f'fins {d}: 429, sleep 30s')
-                        time.sleep(30)
+                        consec_429 += 1
+                        wait_s = 60 * attempt + 60   # 60s, 120s, 180s
+                        rlog(f'fins {c}: 429 (attempt {attempt+1}), sleep {wait_s}s (consec={consec_429})')
+                        if consec_429 >= 5:
+                            rlog('5 consecutive 429s — aborting fins fetch')
+                            break
+                        time.sleep(wait_s)
                         continue
-                    if not r.ok:
-                        rlog(f'fins {d}: http {r.status_code}')
-                        continue
-                    rows = r.json().get('data', [])
-                    hits = 0
-                    for row in rows:
-                        code5_r = row.get('Code', '')
-                        code4_r = code5_r[:4]
-                        if code4_r in target_set and code4_r not in fins_map:
-                            fins_map[code4_r] = row
-                            fn_path = os.path.join(CACHE_DIR, f'fn_{code4_r}.json')
+                    consec_429 = 0
+                    if r.ok:
+                        rows = r.json().get('data', [])
+                        if rows:
+                            fins = sorted(rows, key=lambda x: x.get('DiscDate', ''))[-1]
                             with open(fn_path, 'w') as f:
-                                json.dump(row, f, ensure_ascii=False)
-                            missing = [c for c in missing if c != code4_r]
-                            hits += 1
-                    rlog(f'fins {d}: rows={len(rows)} hits={hits} remaining={len(missing)}')
+                                json.dump(fins, f, ensure_ascii=False)
+                            fins_ok += 1
+                            success = True
+                        else:
+                            rlog(f'fins {c}: 200 but empty data')
+                    else:
+                        rlog(f'fins {c}: http {r.status_code}')
+                    break
                 except Exception as e:
-                    rlog(f'fins {d}: exc {e}')
-        rlog(f'fins done: {len(fins_map)}/{len(target_codes)}')
-        if missing:
-            rlog(f'fins still missing: {missing[:10]}')
+                    rlog(f'fins {c}: exc {e}')
+                    break
+            if consec_429 >= 5:
+                break
+            if not success and attempt == 0:
+                pass  # already logged above
+        rlog(f'fins done: {fins_ok}/{len(target_codes)}')
 
         # ── 3. Yahoo 株価（バッチ）─────────────────────────────────
         try:
