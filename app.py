@@ -905,6 +905,21 @@ def api_debug_stock():
 def api_criteria():
     return jsonify({'criteria': CRITERIA, 'labels': CRITERIA_LABELS})
 
+@app.route('/api/debug/errors')
+def api_debug_errors():
+    """リフレッシュエラーログを返す"""
+    err_file = os.path.join(DATA_DIR, 'refresh_errors.txt')
+    test_file = os.path.join(CACHE_DIR, '_write_test.txt')
+    result = {
+        'cache_dir': CACHE_DIR,
+        'cache_dir_exists': os.path.exists(CACHE_DIR),
+        'write_test_exists': os.path.exists(test_file),
+        'refresh_running': _refresh_running[0],
+        'errors': open(err_file).read() if os.path.exists(err_file) else 'none',
+        'fn_files': len([f for f in os.listdir(CACHE_DIR) if f.startswith('fn_')]) if os.path.exists(CACHE_DIR) else -1,
+    }
+    return jsonify(result)
+
 @app.route('/api/portfolio', methods=['GET'])
 def api_portfolio_get():
     return jsonify(load_portfolio())
@@ -983,14 +998,28 @@ def _do_portfolio_refresh(stocks):
         return
     try:
         codes = list({s.get('code','')[:4] for s in stocks})
+        # キャッシュ書き込みテスト
+        test_file = os.path.join(CACHE_DIR, '_write_test.txt')
+        with open(test_file, 'w') as f:
+            f.write('ok')
         # J-Quantsデータを先に取得（DPS/PER/ROEに必要）
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            list(ex.map(lambda c: _fetch_jquants(c, api_key), codes))
+        errors = []
+        for c in codes:
+            try:
+                _fetch_jquants(c, api_key)
+            except Exception as e:
+                errors.append(f'{c}: {e}')
+        if errors:
+            with open(os.path.join(DATA_DIR, 'refresh_errors.txt'), 'w') as f:
+                f.write('\n'.join(errors[:10]))
         # Yahoo価格はJ-Quants完了後にバッチ取得（現在株価のみ）
         try:
             get_realtime_prices_batch(codes)
         except Exception:
             pass
+    except Exception as e:
+        with open(os.path.join(DATA_DIR, 'refresh_errors.txt'), 'w') as f:
+            f.write(f'OUTER: {e}')
     finally:
         _refresh_running[0] = False
 
