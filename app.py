@@ -1078,6 +1078,27 @@ def _do_portfolio_refresh(stocks):
         except Exception as e:
             rlog(f'master bulk error: {e}')
 
+        # ── 1b. master失敗時: portfolio銘柄のスタブms_を作成 ─────────
+        ms_count = sum(1 for f in os.listdir(CACHE_DIR) if f.startswith('ms_') and f.endswith('.json'))
+        if ms_count == 0:
+            rlog('master bulk failed — creating stub ms_ from portfolio data...')
+            stub_count = 0
+            for stock in stocks:
+                c = (stock.get('code') or '')[:4]
+                if not c:
+                    continue
+                ms_path = os.path.join(CACHE_DIR, f'ms_{c}.json')
+                stub = {
+                    'Code': c + '0',
+                    'CoName': stock.get('name', c),
+                    'S17Nm': '',
+                    'MktNm': '',
+                }
+                with open(ms_path, 'w') as f:
+                    json.dump(stub, f, ensure_ascii=False)
+                stub_count += 1
+            rlog(f'stub ms_ written: {stub_count} stocks')
+
         # ── 2. fins (J-Quants 1-shot → 429なら yfinance fallback) ────
         fins_ok_jq = 0
         fins_ok_yf = 0
