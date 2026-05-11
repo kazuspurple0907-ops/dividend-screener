@@ -33,7 +33,7 @@ JQUANTS_V2     = 'https://api.jquants.com/v2'
 _jquants_sem  = threading.Semaphore(2)
 _jq_rate_lock = threading.Lock()
 _jq_next_ok   = [0.0]
-_JQ_INTERVAL  = 2.1   # 秒（調整可: 小さいほど速いが 429 リスク増）
+_JQ_INTERVAL  = 3.0   # 秒（調整可: 小さいほど速いが 429 リスク増）
 _refresh_lock = threading.Lock()
 _refresh_running = [False]
 
@@ -1061,32 +1061,22 @@ def _do_portfolio_refresh(stocks):
 
         headers = {'x-api-key': api_key}
 
-        # ── 1. master (個別コード) ──────────────────────────────────
-        ms_ok = 0
-        for c in target_codes:
-            ms_path = os.path.join(CACHE_DIR, f'ms_{c}.json')
-            if os.path.exists(ms_path) and (time.time() - os.path.getmtime(ms_path)) < 86400:
-                ms_ok += 1
-                continue
-            try:
-                code5 = c + '0'
-                _jq_rate_wait()
-                with _jquants_sem:
-                    r = requests.get(f'{JQUANTS_V2}/equities/master',
-                                     headers=headers, params={'code': code5}, timeout=15)
-                if r.ok:
-                    rows = r.json().get('data', [])
-                    if rows:
-                        with open(ms_path, 'w') as f:
-                            json.dump(rows[-1], f, ensure_ascii=False)
-                        ms_ok += 1
-                    else:
-                        rlog(f'ms {c}: empty (status={r.status_code})')
-                else:
-                    rlog(f'ms {c}: http {r.status_code}')
-            except Exception as e:
-                rlog(f'ms {c}: exc {e}')
-        rlog(f'master done: {ms_ok}/{len(target_codes)}')
+        # ── 1. master (バルク1回取得 → 個別 ms_ ファイルに書き込み) ─
+        try:
+            rlog('master bulk start...')
+            master_all = get_master_all()   # master_v2.json にキャッシュ (24h TTL)
+            rlog(f'master bulk got {len(master_all)} entries total')
+            ms_ok = 0
+            for code_key, info in master_all.items():
+                code4 = code_key[:4]
+                if code4 in target_set:
+                    ms_path = os.path.join(CACHE_DIR, f'ms_{code4}.json')
+                    with open(ms_path, 'w') as f:
+                        json.dump(info, f, ensure_ascii=False)
+                    ms_ok += 1
+            rlog(f'master done: {ms_ok}/{len(target_codes)} ms_ files written')
+        except Exception as e:
+            rlog(f'master bulk error: {e}')
 
         # ── 2. fins (日付別バルク → 個別 fn_ ファイルに書き込み) ───
         fins_map = {}
@@ -1114,8 +1104,8 @@ def _do_portfolio_refresh(stocks):
                         r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                          headers=headers, params={'date': d}, timeout=20)
                     if r.status_code == 429:
-                        rlog(f'fins {d}: 429, sleep 10s')
-                        time.sleep(10)
+                        rlog(f'fins {d}: 429, sleep 30s')
+                        time.sleep(30)
                         continue
                     if not r.ok:
                         rlog(f'fins {d}: http {r.status_code}')
