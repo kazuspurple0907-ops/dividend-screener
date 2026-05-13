@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- v2 -->
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
@@ -306,7 +307,7 @@
       <span id="screen-count" style="color:var(--text2); font-size:12px;"></span>
     </div>
     <p class="setting-note" style="margin-top:10px;">
-      ※ 全銘柄の財務データを取得するた、初回は数分かかります。2回目以降はキャッシュ使用。<br>
+      ※ 全銘柄の財務データを取得するため初回は数分かかります。2回目以降はキャッシュ使用。<br>
       ※ 最低フィルタ：配当利回り2.5%以上 かつ 時価総額250億以上（結果を絞るため）。
     </p>
   </div>
@@ -320,19 +321,19 @@
             <th onclick="sortTable('screen-table',1)">銘柄名</th>
             <th onclick="sortTable('screen-table',2)">セクター</th>
             <th onclick="sortTable('screen-table',3)">市場</th>
-            <th class="num" onclick="sortTablE('screen-table',4)">時価総額(億)</th>
-            <th class="num" onclick="sortTablE('screen-table',5)">現在値</th>
-            <th class="num" onclick="sortTablE('screen-table',6)">利回り%</th>
-            <th class="num" onclick="sortTablE('screen-table',7)">DPS</th>
-            <th class="num" onclick="sortTablE('screen-table',8)">PER</th>
-            <th class="num" onclick="sortTablE('screen-table',9)">PBR</th>
-            <th class="num" onclick="sortTablE('screen-table',10)">ROE%</th>
-            <th class="num" onclick="sortTablE('screen-table',11)">営業利益率%</th>
-            <th class="num" onclick="sortTablE('screen-table',12)">自巴h��本%</th>
-            <th class="num" onclick="sortTablE('screen-table',13)">配当性向%</th>
-            <th class="num" onclick="sortTablE('screen-table',14)">条件</th>
-            <th class="num" onclick="sortTablE('screen-table',15)">スコア</th>
-            <th onclick="sortTablE('screen-table',16)">判定</th>
+            <th class="num" onclick="sortTable('screen-table',4)">時価総額(億)</th>
+            <th class="num" onclick="sortTable('screen-table',5)">現在値</th>
+            <th class="num" onclick="sortTable('screen-table',6)">利回り%</th>
+            <th class="num" onclick="sortTable('screen-table',7)">DPS</th>
+            <th class="num" onclick="sortTable('screen-table',8)">PER</th>
+            <th class="num" onclick="sortTable('screen-table',9)">PBR</th>
+            <th class="num" onclick="sortTable('screen-table',10)">ROE%</th>
+            <th class="num" onclick="sortTable('screen-table',11)">営業利益率%</th>
+            <th class="num" onclick="sortTable('screen-table',12)">自己資本%</th>
+            <th class="num" onclick="sortTable('screen-table',13)">配当性向%</th>
+            <th class="num" onclick="sortTable('screen-table',14)">条件</th>
+            <th class="num" onclick="sortTable('screen-table',15)">スコア</th>
+            <th onclick="sortTable('screen-table',16)">判定</th>
           </tr>
         </thead>
         <tbody id="screen-tbody">
@@ -660,106 +661,196 @@ function renderSummary(metrics) {
     <div class="summary-item">
       <div class="summary-label">平均利回り</div>
       <div class="summary-value">${avgYield.toFixed(2)}</div>
-      <div class="summary-sub"></div>
+      <div class="summary-sub">%</div>
     </div>
   `;
 }
 
-// ============================================================
-// ポートフォリオタブル</div>
+function checkJQBanner(metrics) {
+  // DPSが0の銘柄が過半数 → J-Quants未接続と判断してバナー表示
+  const valid = metrics.filter(m => !m.error);
+  if (!valid.length) return;
+  const noDps = valid.filter(m => !(m.dps > 0)).length;
+  document.getElementById('jq-banner').style.display = (noDps / valid.length > 0.5) ? 'block' : 'none';
+}
 
-// ============================================================
-// データ站即取得を押して表示
 function renderPortfolioTable(metrics) {
   const tbody = document.getElementById('portfolio-tbody');
   if (!metrics.length) {
     tbody.innerHTML = '<tr><td colspan="16" class="empty"><div class="empty-icon">📂</div>銘柄を追加してください</td></tr>';
     return;
   }
+
   tbody.innerHTML = metrics.map(m => {
-    const pnl    = m.current_price && m.avg_price ? (m.current_price - m.avg_price) / m.avg_price * 100 : null;
-    const sign   = pnl !== null ? (pnl >= 0 ? '+' : '') : '';
-    const pnlCls = pnl !== null ? (pnl >= 0 ? 'pos' : 'neg') : '';
-    const eval   = m.evaluation || '取得4: -';
-    const scoreHTML = m.score != null ? `<div class="score-bar"><div class="score-bg"><div class="score-fill" style="width:${Math.min(100,m.score*5)}%;background:var(--accent)"></div></div><span style="font-size:11px;color:var(--text2)">${m.score}</span></div>` : '--';
-    return `
-      <tr class="portfolio-row" data-code="${m.code}">
+    if (m.error) return `
+      <tr>
         <td>${m.code}</td>
-        <td><span style="font-size:12px;color:var(--text2)">${m.name || '-'}</span></td>
-        <td class="num">${m.current_price ? fmtYen(m.current_price) : '--'}</td>
-        <td class="num">${m.avg_price ? fmtYen(m.avg_price) : '--'}</td>
-        <td class="num ${pnlCls}">${pnl !== null ? sign + pnl.toFixed(1) + '%' : '--'}</td>
-        <td class="num">${m.dividend_per_share != null ? m.dividend_per_share : '--'}</td>
-        <td class="num">${m.per != null ? m.per.toFixed(1) : '--'}</td>
-        <td class="num">${m.pbr != null ? m.pbr.toFixed(2) : '--'}</td>
-        <td class="num">${m.roe != null ? m.roe.toFixed(1) + '%' : '--'}</td>
-        <td class="num">${m.equity_ratio != null ? m.equity_ratio.toFixed(1) + '%' : '--'}</td>
-        <td class="num">${m.payout_ratio != null ? m.payout_ratio.toFixed(1) + '%' : '--'}</td>
-        <td class="num">${m.shares || '-'}</td>
-        <td class="num">${m.annual_dividend ? fmtYen(m.annual_dividend) : '--'}</td>
-        <td>${scoreHTML}</td>
-        <td><span class="badge badge-${m.evaluation || 'warn'}">${eval}</span></td>
-        <td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="removeStock('${m.code}')">刚ち</button></td>
+        <td colspan="14" style="color:var(--ng)">${m.error}</td>
+        <td><button class="btn btn-danger" onclick="removeStock('${m.code}')">削除</button></td>
+      </tr>`;
+
+    const pnl    = m.unrealized_pnl ?? null;
+    const pnlPct = m.unrealized_pnl_pct ?? null;
+    const pnlCls = (pnl ?? 0) >= 0 ? 'pos' : 'neg';
+    const pnlStr = pnl != null
+      ? `<span class="${pnlCls}">${pnl >= 0 ? '+' : ''}${fmtYen(pnl)}</span><br><span style="font-size:10px;color:var(--text3)">${pnlPct >= 0 ? '+' : ''}${pnlPct}%</span>`
+      : '—';
+    const score      = m.score ?? 0;
+    const verdict    = m.verdict    || '—';
+    const verdictCls = m.verdict_class || 'watch';
+    const scoreColor = score >= 75 ? 'var(--ok)' : (score >= 50 ? 'var(--warn)' : 'var(--ng)');
+    const trendIcon = m.dividend_trend === 'increasing' ? '↑' : (m.dividend_trend === 'decreasing' ? '↓' : '');
+    const trendCls  = m.dividend_trend === 'increasing' ? 'pos' : (m.dividend_trend === 'decreasing' ? 'neg' : '');
+    const condsBadgeHtml = condsBadge(m.conditions_met, m.conditions_total);
+
+    return `
+      <tr onclick="toggleDetail('${m.code}')" style="cursor:pointer">
+        <td>${m.code}</td>
+        <td>${m.name || '—'}</td>
+        <td style="color:var(--text2);font-size:12px">${m.sector || '—'}</td>
+        <td class="num">${fmt(m.current_price)}<br><span style="font-size:10px;color:var(--text3)">${m.price_source||''}</span></td>
+        <td class="num" style="color:var(--accent)">${fmt(m.dividend_yield)}%</td>
+        <td class="num">${fmt(m.dps)} <span class="${trendCls}" style="font-size:11px">${trendIcon}</span></td>
+        <td class="num">${m.per ?? '—'}</td>
+        <td class="num">${m.pbr ?? '—'}</td>
+        <td class="num">${m.roe ?? '—'}%</td>
+        <td class="num">${m.equity_ratio ?? '—'}%</td>
+        <td class="num">${m.payout_ratio ?? '—'}%</td>
+        <td class="num">${pnlStr}</td>
+        <td class="num">${condsBadgeHtml}</td>
+        <td class="num">
+          <div class="score-bar">
+            <div class="score-bg"><div class="score-fill" style="width:${score}%;background:${scoreColor}"></div></div>
+            <span style="min-width:28px;color:${scoreColor}">${score}</span>
+          </div>
+        </td>
+        <td><span class="badge badge-${verdictCls}">${verdict}</span></td>
+        <td><button class="btn btn-danger" onclick="event.stopPropagation();removeStock('${m.code}')">削除</button></td>
       </tr>
-    `;
+      <tr id="detail-${m.code}" class="detail-row" style="display:none">
+        <td colspan="16">
+          <div class="detail-inner">
+            <div>
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px">配当履歴（直近）</div>
+              ${renderDpsChart(m.dps_history)}
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px">判定理由</div>
+              <ul class="reason-list">
+                ${(m.reasons || []).map(([t, txt]) => `<li class="r-${t}">${icon(t)} ${txt}</li>`).join('')}
+              </ul>
+            </div>
+            <div style="font-size:11px; color:var(--text2)">
+              <div>時価総額: ${m.market_cap_oku ? m.market_cap_oku + '億円' : '—'}</div>
+              <div>営業利益率: ${m.op_margin ?? '—'}%</div>
+              <div>流動比率: ${m.current_ratio ?? '—'}%</div>
+              <div>年間配当(税後概算): ${m.annual_dividend ? fmtYen(m.annual_dividend) + '円' : '—'}</div>
+              <div>決算期末: ${m.fy_end || '—'}</div>
+              <div>開示日: ${m.disc_date || '—'}</div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--text2);margin-bottom:6px">条件詳細 (${m.conditions_met}/${m.conditions_total})</div>
+              ${renderConditionsDetail(m.conditions)}
+            </div>
+          </div>
+        </td>
+      </tr>`;
   }).join('');
 }
 
-function checkJQBanner(metrics) {
-  const hasErr = metrics.some(m => m.error && m.error.includes('J-Quants'));
-  document.getElementById('jq-banner').style.display = hasErr ? '' : 'none';
+function renderConditionsDetail(conds) {
+  if (!conds) return '—';
+  return Object.entries(CRITERIA_LABELS).map(([key, [name, val]]) => {
+    const ok = conds[key];
+    return `<div style="font-size:11px;margin-bottom:2px">
+      <span style="color:${ok ? 'var(--ok)' : 'var(--ng)'}">${ok ? '✅' : '❌'}</span>
+      <span style="color:var(--text2)"> ${name}: ${val}</span>
+    </div>`;
+  }).join('');
+}
+
+function toggleDetail(code) {
+  const row = document.getElementById('detail-' + code);
+  if (row) row.style.display = row.style.display === 'none' ? '' : 'none';
+}
+
+function renderDpsChart(history) {
+  if (!history || !history.length) return '<span style="color:var(--text3)">データなし</span>';
+  const maxDps = Math.max(...history.map(h => h.dps), 1);
+  const bars = history.slice(0, 8).reverse().map(h => {
+    const pct = Math.round(h.dps / maxDps * 100);
+    return `<div title="${h.year}: ${h.dps}円" class="dps-bar" style="height:${Math.max(pct,4)}%;width:14px;background:${h.dps === 0 ? 'var(--ng)' : 'var(--accent)'}"></div>`;
+  }).join('');
+  return `<div class="dps-chart" style="height:40px;align-items:flex-end">${bars}</div>`;
 }
 
 // ============================================================
 // スクリーニング
 // ============================================================
-
 async function runScreen() {
   const btn = document.getElementById('screen-btn');
   const ldr = document.getElementById('screen-loader');
-  btn.disabled = true;
-  ldr.innerHTML = '<span class="loader"></span>';
+  btn.disabled = true; ldr.innerHTML = '<span class="loader"></span>';
+  document.getElementById('screen-count').textContent = '取得中...';
+
   try {
-    const results = await api('/api/screen');
+    const resp = await api('/api/screen');
+    // {warning, data} 形式 or 配列
+    const results = Array.isArray(resp) ? resp : (resp.data || []);
+    if (resp.warning) {
+      toast(resp.warning, 'err');
+      document.getElementById('screen-count').textContent = 'データなし（先に「データ更新」を実行してください）';
+      renderScreenTable([]);
+      return;
+    }
     lastScreenResults = results;
-    renderScreenResults(results);
+    renderScreenTable(results);
+    const allMet = results.filter(r => r.all_conditions).length;
+    document.getElementById('screen-count').textContent = `${results.length}件ヒット（全条件合致: ${allMet}件）`;
+    toast(`${results.length}件ヒット（全条件合致: ${allMet}件）`);
   } catch (e) {
     toast(e.message, 'err');
+    document.getElementById('screen-count').textContent = '';
   }
-  btn.disabled = false;
-  ldr.innerHTML = '';
+
+  btn.disabled = false; ldr.innerHTML = '';
 }
 
-function renderScreenResults(results) {
+function renderScreenTable(results) {
   const tbody = document.getElementById('screen-tbody');
-  document.getElementById('screen-count').textContent = results.length ? `${results.length}動が媌' : '';
   if (!results.length) {
-    tbody.innerHTML = '<tr><td colspan="17" class="empty"><div class="empty-icon">🔍</div>「スクリーニング実行」を押してください</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="17" class="empty"><div class="empty-icon">🔍</div>条件に合う銘柄がありませんでした</td></tr>';
     return;
   }
-  tbody.innerHTML = results.map(r => {
-    const reasonHTML = r.reasons?.length ? `<ul class="reason-list">${r.reasons.map(x => `<li class="r-${x.cls}">${x.text}</li>`).join('')}</ul>` : '';
-    return `
-      <tr>
-        <td>${r.code}</td>
-        <td>${r.name || '-'}</td>
-        <td>${r.sector || '-'}</td>
-        <td>${r.market || '-'}</td>
-        <td class="num">${r.market_cap_b != null ? r.market_cap_b.toFixed(0) : '--'}</td>
-        <td class="num">${r.price != null ? fmtYen(r.price) : '--'}</td>
-        <td class="num">${r.dividend_yield != null ? r.dividend_yield.toFixed(2) + '%' : '--'}</td>
-        <td class="num">${r.dps != null ? r.dps : '--'}</td>
-        <td class="num">${r.per != null ? r.per.toFixed(1) : '--'}</td>
-        <td class="num">${r.pbr != null ? r.pbr.toFixed(2) : '--'}</td>
-        <td class="num">${r.roe != null ? r.roe.toFixed(1) + '%' : '--'}</td>
-        <td class="num">${r.op_margin != null ? r.op_margin.toFixed(1) + '%' : '--'}</td>
-        <td class="num">${r.equity_ratio != null ? r.equity_ratio.toFixed(1) + '%' : '--'}</td>
-        <td class="num">${r.payout_ratio != null ? r.payout_ratio.toFixed(1) + '%' : '--'}</td>
-        <td class="num">${r.score != null ? r.score : '--'}</td>
-        <td class="num">${r.score != null ? r.score : '--'}</td>
-        <td><span class="badge badge-ok">>判定</span></td>
-      </tr>
-    `;
+
+  tbody.innerHTML = results.map(m => {
+    const scoreColor = m.score >= 75 ? 'var(--ok)' : (m.score >= 50 ? 'var(--warn)' : 'var(--ng)');
+    const condsBadgeHtml = condsBadge(m.conditions_met, m.conditions_total);
+    const rowStyle = m.all_conditions ? 'background:rgba(62,207,142,.04);' : '';
+    return `<tr style="${rowStyle}">
+      <td>${m.code}</td>
+      <td>${m.name || '—'}</td>
+      <td style="color:var(--text2);font-size:12px">${m.sector || '—'}</td>
+      <td style="font-size:12px">${m.market || '—'}</td>
+      <td class="num">${m.market_cap_oku ? m.market_cap_oku + '億' : '—'}</td>
+      <td class="num">${fmt(m.current_price)}</td>
+      <td class="num" style="color:var(--accent)">${fmt(m.dividend_yield)}%</td>
+      <td class="num">${fmt(m.dps)}</td>
+      <td class="num">${m.per ?? '—'}</td>
+      <td class="num">${m.pbr ?? '—'}</td>
+      <td class="num">${m.roe ?? '—'}%</td>
+      <td class="num">${m.op_margin ?? '—'}%</td>
+      <td class="num">${m.equity_ratio ?? '—'}%</td>
+      <td class="num">${m.payout_ratio ?? '—'}%</td>
+      <td class="num">${condsBadgeHtml}</td>
+      <td class="num">
+        <div class="score-bar">
+          <div class="score-bg"><div class="score-fill" style="width:${m.score}%;background:${scoreColor}"></div></div>
+          <span style="min-width:28px;color:${scoreColor}">${m.score}</span>
+        </div>
+      </td>
+      <td><span class="badge badge-${m.verdict_class}">${m.verdict}</span></td>
+    </tr>`;
   }).join('');
 }
 
@@ -769,130 +860,18 @@ function renderScreenResults(results) {
 async function loadRecommendations() {
   const btn = document.getElementById('rec-btn');
   const ldr = document.getElementById('rec-loader');
-  btn.disabled = true;
-  ldr.innerHTML = '<span class="loader"></span>';
+  btn.disabled = true; ldr.innerHTML = '<span class="loader"></span> ';
+  document.getElementById('rec-list').innerHTML = '<div class="empty"><span class="loader"></span> 分析中（スクリーニング実行も含むため数分かかります）</div>';
+
   try {
-    const data = await api('/api/recommendations');
-    renderRecommendations(data);
+    const recs = await api('/api/recommendations');
+    renderRecommendations(recs);
   } catch (e) {
     toast(e.message, 'err');
+    document.getElementById('rec-list').innerHTML = `<div class="empty"><div class="empty-icon">❌</div>${e.message}</div>`;
   }
-  btn.disabled = false;
-  ldr.innerHTML = '';
-}
 
-function renderRecommendations(data) {
-  const container = document.getElementById('rec-list');
-  if (!data.length) {
-    container.innerHTML = '<div class="empty"><div class="empty-icon">💡</div>「入替推奨」がありません。</div>';
-    return;
-  }
-  container.innerHTML = data.map(rec => {
-    const candsHTML = rec.candidates?.map(c => `
-      <div class="rec-candidate">
-        <div class="rec-cand-code">${c.code} ${c.name || ''}</div>
-        <div class="rec-cand-meta">配当場合�: ${c.dividend_yield != null ? c.dividend_yield.toFixed(2) + '%' : '--'} / PER: ${c.per != null ? c.per.toFixed(1) : '--'} / ROE: ${c.roe != null ? c.roe.toFixed(1) + '%' : '--'}</div>
-      </div>`).join('') || '';
-    return `
-      <div class="rec-card">
-        <div class="rec-header">
-          <div class="rec-arrow">→</div>
-          <div class="rec-stock">
-            <div class="rec-stock-code">${rec.holding_code} ${rec.holding_name || ''}</div>
-            <div class="rec-stock-meta">取得小価： ${fmtYen(rec.holding_value)} / 酥当場合�: ${rec.holding_yield != null ? rec.holding_yield.toFixed(2) + '%' : '--'}</div>
-          </div>
-          <div class="rec-gain">
-            全愛基奨： +${rec.expected_gain != null ? rec.expected_gain.toFixed(2) + '%' : '--'}
-          </div>
-        </div>
-        <div class="rec-candidates">
-          ${candsHTML}
-        </div>
-      </div>`;
-  }).join('');
-}
-
-// ============================================================
-// アラート
-// ============================================================
-async function loadAlerts() {
-  const ldr = document.getElementById('alert-loader');
-  ldr.innerHTML = '<span class="loader"></span>';
-  try {
-    const alerts = await api('/api/alerts');
-    renderAlerts(alerts);
-  } catch (e) {
-    toast(e.message, 'err');
-  }
-  ldr.innerHTML = '';
-}
-
-function renderAlerts(alerts) {
-  const container = document.getElementById('alert-list');
-  if (!alerts.length) {
-    container.innerHTML = '<div class="empty"><div class="empty-icon">🔔</div>モアリートはありません。</div>';
-    return;
-  }
-  container.innerHTML = alerts.map(a => `
-    <div class="alert-item">
-      <div class="alert-type alert-${a.type}">${a.type.toUpperCase()}</div>
-      <div class="alert-body">
-        <div class="alert-title">${a.title}</div>
-        <div class="alert-meta">${a.code} &#x2146; ${a.message}</div>
-        ${a.url ? `<a class="alert-link" href="${a.url}" target="_blank">設定��></a>` : ''}
-      </div>
-    </div>`
-  ).join('');
-}
-
-// ============================================================
-// ソートト
-// ============================================================
-function sortTable(tableId, colIndex) {
-  const table = document.getElementById(tableId);
-  if (!table) return;
-  const tbody = table.tBodies[0];
-  const rows = Array.from(tbody.rows);
-  const isAsc = table.dataset.sortCol === String(colIndex) && table.dataset.sortDir === 'asc';
-  rows.sort((a, b) => {
-    const aV = a.cells[colIndex]?.textContent.trim() || '';
-    const bV = b.cells[colIndex]?.textContent.trim() || '';
-    const aN = parseFloat(aV.replace(/[,?��]/g, ''));
-    const bN = parseFloat(bV.replace(/[,?��]/g, ''));
-    if (!isNaN(aN) && !isNaN(bN)) return isAsc ? aN > bN ? -1 : 1 : aN < bN ? -1 : 1;
-    return isAsc ? bV.localeCompare(aV) : aV.localeCompare(bV);
-  });
-  rows.forEach(r => tbody.appendChild(r));
-  table.dataset.sortCol = String(colIndex);
-  table.dataset.sortDir = isAsc ? 'desc' : 'asc';
-}
-
-function fmtYen(n) {
-  if (n == null || isNaN(n)) return '--';
-  return n >= 100000000 ? (¥ ' + (n / 100000000).toFixed(1) + '勄' :
-         n >= 10000 ? '(¥ ' + (n / 10000).toFixed(1) + '万億' :
-         '(¥ ' + n.toLocaleString('ja-JP', { maximumFractionDigits: 0 });
-}
-
-async function clearCache() {
-  try {
-    await api('/api/clear_cache', { method: 'POST' });
-    toast('キャッシュクリアをキリアしました');
-  } catch (e) {
-    toast(e.message, 'err');
-  }
-}
-
-// 初回え影要実除
-window.addEventListener('load', () => {
-  loadConfig();
-  loadPortfolio().then(() => loadPortfolioMetrics());
-  renderCriteriaDisplay();
-});
-</script>
-</body>
-</html>
- = false; ldr.innerHTML = '';
+  btn.disabled = false; ldr.innerHTML = '';
 }
 
 function renderRecommendations(recs) {
