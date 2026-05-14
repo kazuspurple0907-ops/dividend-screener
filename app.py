@@ -619,15 +619,20 @@ def run_screening(portfolio_codes=None):
     except Exception:
         return None
 
-    # 2. fins: fins_v2.json + 個別 fn_ ファイル（個別ファイル優先）
+    # 2. fins: fins_v2.json が必須（全銘柄スクリーニングには全銘柄データが必要）
     fins_bulk = {}
     fins_v2_file = os.path.join(CACHE_DIR, 'fins_v2.json')
-    if os.path.exists(fins_v2_file):
-        try:
-            with open(fins_v2_file) as f:
-                fins_bulk = json.load(f)
-        except Exception:
-            pass
+    if not os.path.exists(fins_v2_file):
+        return None  # fins_v2.json なし → 「データ更新」でバックグラウンド取得が必要
+
+    try:
+        with open(fins_v2_file) as f:
+            fins_bulk = json.load(f)
+    except Exception:
+        return None
+
+    if len(fins_bulk) < 100:
+        return None  # データが少なすぎる（取得途中 or 失敗）
 
     # 個別 fn_ ファイルで上書き（より新しい・正確なデータ）
     for fname in os.listdir(CACHE_DIR):
@@ -639,9 +644,6 @@ def run_screening(portfolio_codes=None):
                     fins_bulk[code4 + '0'] = json.load(fp)
             except Exception:
                 pass
-
-    if not fins_bulk:
-        return None  # fins データなし → 準備中
 
     # 3. 既存の rt_ price キャッシュ
     rt_cache = {}
@@ -1460,4 +1462,3 @@ if __name__ == '__main__':
     print(f'  http://localhost:{port} を開いてください')
     print('=' * 55)
     app.run(debug=False, port=port, host=host)
-# trigger: 1778799670
