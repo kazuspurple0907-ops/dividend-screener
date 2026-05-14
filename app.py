@@ -594,58 +594,122 @@ def fetch_tdnet_alerts(codes):
     return sorted(unique, key=lambda x: x.get('time',''), reverse=True)[:60]
 
 # ============================================================
-# スクリーニング（バルク / キャッシュ重視）
+# スクリーニング（東証全銘柄 / ポートフォリオ除外 / 上位40社）
 # ============================================================
 
-def run_screening():
+def run_screening(portfolio_codes=None):
     """
-    スクリーニング（キャッシュ優先・即時返却版）
-    - 新規API呼び出しは行わない（タイムアウト回避）
-    - ポートフォリオ更新済みの個別キャッシュ（ms_/fn_/rt_）からのみ読み込む
-    - バルクマスターキャッシュ（master_v2.json）があればそれも活用
+    東証全上場銘柄スクリーニング
+    - master_v2.json + fins_v2.json（または個別fn_ファイル）を使用
+    - ポートフォリオ銘柄を除外
+    - 財務指標で事前フィルタ → yfinance価格バッチ取得 → 上位40社を返す
+    - master_v2.json または fins データがない場合は None を返す（準備中）
     """
-    # 個別銘柄キャッシュを読み込む
-    masters, fins_cache, rt_cache = {}, {}, {}
-    for fname in os.listdir(CACHE_DIR):
-        fpath = os.path.join(CACHE_DIR, fname)
+    if portfolio_codes is None:
+        portfolio_codes = {s.get('code', '')[:4] for s in load_portfolio()}
+
+    # 1. master_v2.json（必須）
+    bulk_master_file = os.path.join(CACHE_DIR, 'master_v2.json')
+    if not os.path.exists(bulk_master_file):
+        return None  # 準備未完了
+
+    try:
+        with open(bulk_master_file) as f:
+            master_bulk = json.load(f)
+    except Exception:
+        return None
+
+    # 2. fins: fins_v2.json + 個別 fn_ ファイル（個別ファイル優先）
+    fins_bulk = {}
+    fins_v2_file = os.path.join(CACHE_DIR, 'fins_v2.json')
+    if os.path.exists(fins_v2_file):
         try:
-            if fname.startswith('ms_') and fname.endswith('.json'):
-                code4 = fname[3:-5]
+            with open(fins_v2_file) as f:
+                fins_bulk = json.load(f)
+        except Exception:
+            pass
+
+    # 個別 fn_ ファイルで上書き（より新しい・正確なデータ）
+    for fname in os.listdir(CACHE_DIR):
+        if fname.startswith('fn_') and fname.endswith('.json'):
+            code4 = fname[3:-5]
+            fpath = os.path.join(CACHE_DIR, fname)
+            try:
                 with open(fpath) as fp:
-                    masters[code4] = json.load(fp)
-            elif fname.startswith('fn_') and fname.endswith('.json'):
-                code4 = fname[3:-5]
-                with open(fpath) as fp:
-                    fins_cache[code4] = json.load(fp)
-            elif fname.startswith('rt_') and fname.endswith('.json'):
-                code4 = fname[3:-5]
+                    fins_bulk[code4 + '0'] = json.load(fp)
+            except Exception:
+                pass
+
+    if not fins_bulk:
+        return None  # fins データなし → 準備中
+
+    # 3. 既存の rt_ price キャッシュ
+    rt_cache = {}
+    for fname in os.listdir(CACHE_DIR):
+        if fname.startswith('rt_') and fname.endswith('.json'):
+            code4 = fname[3:-5]
+            fpath = os.path.join(CACHE_DIR, fname)
+            try:
                 with open(fpath) as fp:
                     rt_cache[code4] = json.load(fp)
-        except Exception:
-            pass
+            except Exception:
+                pass
 
-    # バルクマスターキャッシュがあれば masters に追加（sector/name 情報補完）
-    bulk_cache = os.path.join(CACHE_DIR, 'master_v2.json')
-    if os.path.exists(bulk_cache):
-        try:
-            with open(bulk_cache) as fp:
-                bulk = json.load(fp)
-            for code5, info in bulk.items():
-                code4 = code5[:4]
-                if code4 not in masters:
-                    masters[code4] = info
-        except Exception:
-            pass
+    # 4. 財務指標による事前フィルタ（価格不要、ROE/営業利益率/自己資本比率）
+    pre_candidates = []
+    for code5, info in master_bulk.items():
+        code4 = code5[:4]
+        if code4 in portfolio_codes:
+            continue  # ポートフォリオ銘柄は除外
 
-    if not masters:
-        return []  # キャッシュが空（ポートフォリオ更新前）
+        fins = fins_bulk.get(code5) or fins_bulk.get(code4) or {}
+        if not fins:
+            continue
 
+        eps   = _f(fins.get('EPS'))
+        bps   = _f(fins.get('BPS'))
+        dv    = _f(fins.get('DivAnn'))
+        fdv   = _f(fins.get('FDivAnn'))
+        dps   = fdv if fdv > 0 else dv
+        eq_ar = _f(fins.get('EqAR'))
+        sales = _f(fins.get('Sales'))
+        op    = _f(fins.get('OP'))
+
+        if dps <= 0 or eps <= 0:
+            continue
+
+        roe   = eps / bps   if bps   > 0 else 0
+        op_mg = op  / sales if sales > 0 else 0
+
+        # 事前フィルタ（緩め）: ROE>=5%, 営業利益率>=5%, 自己資本比率>=20%
+        if roe < 0.05 or op_mg < 0.05 or eq_ar < 0.20:
+            continue
+
+        pre_candidates.append({'code4': code4, 'info': info, 'fins': fins})
+
+    if not pre_candidates:
+        return []
+
+    # 5. 価格をバッチ取得（キャッシュにない銘柄、最大 200 銘柄）
+    need_prices = [c['code4'] for c in pre_candidates if c['code4'] not in rt_cache]
+    if need_prices:
+        get_realtime_prices_batch(need_prices[:200])
+        for code4 in need_prices[:200]:
+            cf = os.path.join(CACHE_DIR, f'rt_{code4}.json')
+            if os.path.exists(cf):
+                try:
+                    with open(cf) as fp:
+                        rt_cache[code4] = json.load(fp)
+                except Exception:
+                    pass
+
+    # 6. 完全指標計算 + スクリーニング基準チェック
     results = []
-    for code4, info in masters.items():
-        fins = fins_cache.get(code4) or {}
-        rt   = rt_cache.get(code4)
+    for c in pre_candidates:
+        code4 = c['code4']
+        rt = rt_cache.get(code4)
         try:
-            m = build_metrics_from(code4, info, fins, rt=rt)
+            m = build_metrics_from(code4, c['info'], c['fins'], rt=rt)
             dy = m.get('dividend_yield') or 0
             mc = m.get('market_cap_oku') or 0
             if dy < 2.5 or mc < 250:
@@ -659,103 +723,125 @@ def run_screening():
                   key=lambda x: (x.get('all_conditions', False),
                                  x.get('conditions_met', 0),
                                  x.get('score', 0)),
-                  reverse=True)
+                  reverse=True)[:40]
 
 # ============================================================
 # 入替推奨（年間配当比較・含み益除外）
 # ============================================================
 
 def get_recommendations(portfolio_metrics, screen_results):
+    """
+    入替推奨
+    - スクリーニング上位40社の中から同業種の候補のみを推奨
+    - 同業種がなければ 'no_same_sector': True で表示
+    - 同業種はあるが条件が改善しない場合はスキップ
+    """
     recs = []
-    pool = [s for s in screen_results if s.get('conditions_met', 0) >= 5]
+    pool = [s for s in (screen_results or []) if s.get('conditions_met', 0) >= 5]
 
     for pm in portfolio_metrics:
         if pm.get('error'):
             continue
 
-        pf_met   = pm.get('conditions_met', 0)
-        pf_cls   = pm.get('verdict_class', '')
-        avg_p    = pm.get('avg_price') or 0
-        cur_p    = pm.get('current_price') or 0
-        shares   = pm.get('shares') or 0
-        dps      = pm.get('dps') or 0
+        pf_met  = pm.get('conditions_met', 0)
+        pf_cls  = pm.get('verdict_class', '')
+        avg_p   = pm.get('avg_price') or 0
+        cur_p   = pm.get('current_price') or 0
+        shares  = pm.get('shares') or 0
+        dps     = pm.get('dps') or 0
+        sector  = pm.get('sector', '')
+        code    = pm.get('code', '')
 
-        # ① 50%以上含み益の銘柄は除外
+        # 全条件達成かつ保有継続はスキップ
+        if pf_cls == 'hold' and pf_met >= 8:
+            continue
+
+        # 50%以上含み益はスキップ
         gain_pct = ((cur_p - avg_p) / avg_p * 100) if avg_p > 0 else 0
         if gain_pct >= 50:
             continue
 
-        # ② 取得時の想定利回りが高く、値上がりで利回りが低下したものは除外
-        #    （配当は変わっていないが株価上昇で利回りが相対的に低下）
-        yield_at_cost = (dps / avg_p * 100) if avg_p > 0 else 0
-        cur_yield     = pm.get('dividend_yield') or 0
-        if yield_at_cost >= 3.0 and cur_yield < 2.5 and gain_pct >= 20:
-            continue
-
-        # ③ 保有継続かつ条件7以上はスキップ
-        if pf_cls == 'hold' and pf_met >= 7:
-            continue
-
-        sector = pm.get('sector', '')
-        code   = pm.get('code', '')
-
-        # 現在の年間配当収入
+        yield_at_cost  = (dps / avg_p * 100) if avg_p > 0 else 0
         annual_div_now = round(dps * shares * 0.8, 0) if dps and shares else 0
-        # 売却想定金額（現在値 × 株数）
-        sell_amount = cur_p * shares if cur_p and shares else avg_p * shares
+        sell_amount    = cur_p * shares if cur_p and shares else avg_p * shares
 
+        current_info = {k: pm.get(k) for k in [
+            'code','name','sector','dividend_yield','conditions_met','score',
+            'verdict','verdict_class','per','pbr','roe','payout_ratio',
+            'equity_ratio','avg_price','current_price','shares','dps'
+        ]}
+
+        # 同業種の候補（スクリーニング上位40社のみ、fallback なし）
         same_sec = [s for s in pool if s.get('sector') == sector and s.get('code') != code]
+
+        if not sector or not same_sec:
+            # 同業種に候補なし → 表示するが candidates は空
+            recs.append({
+                'current':           current_info,
+                'current_annual_div': annual_div_now,
+                'gain_pct':          round(gain_pct, 1),
+                'yield_at_cost':     round(yield_at_cost, 2),
+                'sell_amount':       round(sell_amount, 0),
+                'replacements':      [],
+                'gain_conditions':   0,
+                'no_same_sector':    True,
+            })
+            continue
+
         candidates_raw = sorted(
-            same_sec or [s for s in pool if s.get('code') != code],
+            same_sec,
             key=lambda x: (x.get('conditions_met', 0), x.get('score', 0)),
             reverse=True
         )[:5]
 
-        # 候補ごとに年間配当収入を試算
+        # 年間配当収入試算
         candidates = []
         for c in candidates_raw:
             c_price = c.get('current_price') or 0
             c_dps   = c.get('dps') or 0
             if c_price > 0 and sell_amount > 0:
-                c_shares_est  = sell_amount / c_price
-                c_annual_div  = round(c_dps * c_shares_est * 0.8, 0)
-                div_change    = round(c_annual_div - annual_div_now, 0)
+                c_shares_est   = sell_amount / c_price
+                c_annual_div   = round(c_dps * c_shares_est * 0.8, 0)
+                div_change     = round(c_annual_div - annual_div_now, 0)
                 div_change_pct = round((c_annual_div - annual_div_now) / annual_div_now * 100, 1) if annual_div_now > 0 else 0
             else:
                 c_shares_est, c_annual_div, div_change, div_change_pct = 0, 0, 0, 0
 
-            cand = {k: c.get(k) for k in ['code','name','sector','dividend_yield',
-                                           'conditions_met','score','verdict','verdict_class',
-                                           'per','pbr','roe','payout_ratio','equity_ratio',
-                                           'market_cap_oku','current_price','dps']}
+            cand = {k: c.get(k) for k in [
+                'code','name','sector','dividend_yield','conditions_met','score',
+                'verdict','verdict_class','per','pbr','roe','payout_ratio',
+                'equity_ratio','market_cap_oku','current_price','dps'
+            ]}
             cand.update({
-                'est_shares':       round(c_shares_est, 0),
-                'est_annual_div':   c_annual_div,
-                'div_change':       div_change,
-                'div_change_pct':   div_change_pct,
+                'est_shares':     round(c_shares_est, 0),
+                'est_annual_div': c_annual_div,
+                'div_change':     div_change,
+                'div_change_pct': div_change_pct,
             })
             candidates.append(cand)
 
-        # 条件合致数が現在より多い候補に絞る
-        candidates = [c for c in candidates if (c.get('conditions_met') or 0) > pf_met][:3]
-        if not candidates:
-            continue
+        # 条件合致数が現在より多い候補のみ
+        better = [c for c in candidates if (c.get('conditions_met') or 0) > pf_met][:3]
+        if not better:
+            continue  # 同業種はあるが改善候補なし → スキップ
 
-        best_met = candidates[0].get('conditions_met', 0)
+        best_met = better[0].get('conditions_met', 0)
         recs.append({
-            'current': {k: pm.get(k) for k in ['code','name','sector','dividend_yield',
-                                                 'conditions_met','score','verdict','verdict_class',
-                                                 'per','pbr','roe','payout_ratio','equity_ratio',
-                                                 'avg_price','current_price','shares','dps']},
+            'current':           current_info,
             'current_annual_div': annual_div_now,
-            'gain_pct':           round(gain_pct, 1),
-            'yield_at_cost':      round(yield_at_cost, 2),
-            'sell_amount':        round(sell_amount, 0),
-            'replacements':       candidates,
-            'gain_conditions':    best_met - pf_met,
+            'gain_pct':          round(gain_pct, 1),
+            'yield_at_cost':     round(yield_at_cost, 2),
+            'sell_amount':       round(sell_amount, 0),
+            'replacements':      better,
+            'gain_conditions':   best_met - pf_met,
+            'no_same_sector':    False,
         })
 
-    return sorted(recs, key=lambda x: x['gain_conditions'], reverse=True)
+    # 改善候補あり → gain_conditions 降順、同業種なし → 末尾
+    with_cands    = sorted([r for r in recs if not r.get('no_same_sector')],
+                           key=lambda x: x['gain_conditions'], reverse=True)
+    no_sec_recs   = [r for r in recs if r.get('no_same_sector')]
+    return with_cands + no_sec_recs
 
 # ============================================================
 # SBI CSV パーサー
@@ -1192,6 +1278,18 @@ def _do_portfolio_refresh(stocks):
         except Exception as e:
             rlog(f'prices exc: {e}')
 
+        # ── 4. fins_v2.json がなければバックグラウンドで全銘柄取得 ─────
+        fins_v2_file = os.path.join(CACHE_DIR, 'fins_v2.json')
+        if not os.path.exists(fins_v2_file):
+            def _fetch_fins_bg():
+                try:
+                    get_fins_all()
+                    rlog('fins_v2 background fetch complete')
+                except Exception as e:
+                    rlog(f'fins_v2 bg error: {e}')
+            threading.Thread(target=_fetch_fins_bg, daemon=True).start()
+            rlog('fins_v2.json なし → バックグラウンド取得開始')
+
     except Exception as e:
         import traceback
         rlog(f'OUTER ERROR: {e}\n{traceback.format_exc()[-300:]}')
@@ -1230,18 +1328,68 @@ def api_warmup_status():
     )
     return jsonify({'total': total, 'cached': cached, 'ready': cached >= total})
 
+def get_dividend_cut_alerts(codes):
+    """保有銘柄のキャッシュから減配予想を検出（無条件でアラート表示）"""
+    cuts = []
+    for code in codes:
+        code4 = code[:4]
+        fn_path = os.path.join(CACHE_DIR, f'fn_{code4}.json')
+        ms_path = os.path.join(CACHE_DIR, f'ms_{code4}.json')
+        if not os.path.exists(fn_path):
+            continue
+        try:
+            with open(fn_path) as f:
+                fins = json.load(f)
+            div_ann  = float(fins.get('DivAnn')  or 0)
+            fdiv_ann = float(fins.get('FDivAnn') or 0)
+            if fdiv_ann > 0 and fdiv_ann < div_ann:
+                name = ''
+                if os.path.exists(ms_path):
+                    with open(ms_path) as f:
+                        ms = json.load(f)
+                    name = ms.get('CoName', '')
+                cuts.append({
+                    'type':    'dividend_cut',
+                    'code':    code4,
+                    'company': name,
+                    'title':   f'減配予想: 実績 {div_ann:.0f}円 → 来期予想 {fdiv_ann:.0f}円',
+                    'time':    '',
+                    'source':  'キャッシュデータ',
+                    'url':     '',
+                })
+        except Exception:
+            pass
+    return cuts
+
+
 @app.route('/api/alerts')
 def api_alerts():
     portfolio = load_portfolio()
-    codes = [s.get('code','') for s in portfolio]
-    return jsonify(fetch_tdnet_alerts(codes) if codes else [])
+    codes = [s.get('code', '') for s in portfolio]
+    if not codes:
+        return jsonify([])
+    # 減配アラート（キャッシュから即時） + TDnetアラート
+    cut_alerts  = get_dividend_cut_alerts(codes)
+    tdnet_alerts = fetch_tdnet_alerts(codes)
+    return jsonify(cut_alerts + tdnet_alerts)
 
 @app.route('/api/screen')
 def api_screen():
     try:
-        results = run_screening()
-        if not results:
-            return jsonify({'warning': 'まず「保有銘柄」タブで「データ更新」を実行してください。キャッシュが空です。', 'data': []})
+        portfolio_codes = {s.get('code', '')[:4] for s in load_portfolio()}
+        results = run_screening(portfolio_codes)
+        if results is None:
+            # master_v2.json または fins データが未整備 → バックグラウンドで取得開始
+            def _do_prefetch():
+                try: get_master_all()
+                except Exception: pass
+                try: get_fins_all()
+                except Exception: pass
+            threading.Thread(target=_do_prefetch, daemon=True).start()
+            return jsonify({
+                'warning': '全銘柄データを準備中です（初回は数分かかります）。「データ更新」→「設定」の順に実行してから、少し待って再度「スクリーニング実行」を押してください。',
+                'data': []
+            })
         return jsonify(results)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1268,7 +1416,8 @@ def api_recommendations():
         pf_metrics = _calc_portfolio_metrics()
         if not pf_metrics:
             return jsonify([])
-        screen_results = run_screening()
+        portfolio_codes = {s.get('code', '')[:4] for s in load_portfolio()}
+        screen_results = run_screening(portfolio_codes) or []
         return jsonify(get_recommendations(pf_metrics, screen_results))
     except Exception as e:
         return jsonify({'error': str(e)}), 500
