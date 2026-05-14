@@ -162,6 +162,13 @@
   .pos { color: var(--ok); }
   .neg { color: var(--ng); }
 
+  /* ポートフォリオ ソートボタン */
+  .sort-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+  .sort-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); padding: 4px 12px; border-radius: 20px; font-size: 12px; cursor: pointer; transition: all .15s; white-space: nowrap; }
+  .sort-btn:hover { color: var(--text); border-color: var(--accent); }
+  .sort-btn.active { background: rgba(79,142,247,.15); color: var(--accent); border-color: var(--accent); }
+  .sort-arrow { font-size: 10px; margin-left: 3px; }
+
   /* 入替推奨カード */
   .rec-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
   .rec-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
@@ -257,6 +264,16 @@
         <button class="btn btn-primary" onclick="addStock()" style="align-self:flex-end;">追加</button>
         <button class="btn btn-secondary" onclick="toggleAddForm()" style="align-self:flex-end;">キャンセル</button>
       </div>
+    </div>
+
+    <div class="sort-btns" id="portfolio-sort-btns">
+      <span style="font-size:12px;color:var(--text2)">並び替え：</span>
+      <button class="sort-btn" data-sort="conditions_met" onclick="sortPortfolio('conditions_met')">条件数<span class="sort-arrow"></span></button>
+      <button class="sort-btn" data-sort="unrealized_pnl" onclick="sortPortfolio('unrealized_pnl')">含み損益<span class="sort-arrow"></span></button>
+      <button class="sort-btn" data-sort="unrealized_pnl_pct" onclick="sortPortfolio('unrealized_pnl_pct')">含み損益率<span class="sort-arrow"></span></button>
+      <button class="sort-btn" data-sort="code" onclick="sortPortfolio('code')">コード<span class="sort-arrow"></span></button>
+      <button class="sort-btn" data-sort="dividend_yield" onclick="sortPortfolio('dividend_yield')">利回り<span class="sort-arrow"></span></button>
+      <button class="sort-btn" data-sort="market_value" onclick="sortPortfolio('market_value')">評価額<span class="sort-arrow"></span></button>
     </div>
 
     <div class="tbl-wrap">
@@ -1011,7 +1028,47 @@ function renderAlerts(alerts) {
 }
 
 // ============================================================
-// テーブルソート
+// ポートフォリオ並び替え
+// ============================================================
+let pfSortKey = null;
+let pfSortAsc = false;
+
+function sortPortfolio(key) {
+  if (pfSortKey === key) {
+    pfSortAsc = !pfSortAsc;
+  } else {
+    pfSortKey = key;
+    pfSortAsc = (key === 'code'); // コードのみ昇順デフォルト、その他は降順
+  }
+
+  const sorted = [...portfolioMetrics].sort((a, b) => {
+    let av, bv;
+    if (key === 'market_value') {
+      av = (a.current_price || 0) * (a.shares || 0);
+      bv = (b.current_price || 0) * (b.shares || 0);
+    } else if (key === 'code') {
+      av = a.code || '';
+      bv = b.code || '';
+      return pfSortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    } else {
+      av = a[key] ?? -Infinity;
+      bv = b[key] ?? -Infinity;
+    }
+    return pfSortAsc ? av - bv : bv - av;
+  });
+
+  renderPortfolioTable(sorted);
+
+  // ボタンのアクティブ状態更新
+  document.querySelectorAll('#portfolio-sort-btns .sort-btn').forEach(btn => {
+    const isActive = btn.dataset.sort === key;
+    btn.classList.toggle('active', isActive);
+    btn.querySelector('.sort-arrow').textContent = isActive ? (pfSortAsc ? '▲' : '▼') : '';
+  });
+}
+
+// ============================================================
+// テーブルソート（列ヘッダークリック用）
 // ============================================================
 const sortState = {};
 function sortTable(tableId, colIdx) {
