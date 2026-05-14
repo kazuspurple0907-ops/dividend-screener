@@ -107,6 +107,7 @@
   .alert-div  { background: rgba(79,142,247,.15); color: var(--accent); }
   .alert-rev  { background: rgba(245,166,35,.15);  color: var(--warn); }
   .alert-err  { background: rgba(231,76,60,.15);   color: var(--ng); }
+  .alert-cut  { background: rgba(231,76,60,.2);    color: var(--ng); font-weight:700; }
   .alert-body { flex: 1; }
   .alert-title { font-size: 13px; margin-bottom: 3px; }
   .alert-meta  { font-size: 11px; color: var(--text2); }
@@ -887,6 +888,29 @@ function renderRecommendations(recs) {
     const gainPct = rec.gain_pct || 0;
     const yac     = rec.yield_at_cost || 0;
 
+    // 同業種に候補なし
+    if (rec.no_same_sector) {
+      return `
+      <div class="rec-card" style="opacity:0.65;border-color:var(--border)">
+        <div class="rec-header">
+          <div class="rec-stock">
+            <div class="rec-stock-code">${cur.code} ${cur.name || ''}</div>
+            <div class="rec-stock-meta">
+              条件: ${condsBadge(cur.conditions_met, 8)} &nbsp;
+              スコア: ${cur.score ?? '—'} &nbsp;
+              <span class="badge badge-${cur.verdict_class || 'watch'}">${cur.verdict || '—'}</span> &nbsp;
+              ${cur.sector || 'セクター不明'}
+            </div>
+          </div>
+          <div class="rec-arrow" style="color:var(--text3)">→</div>
+          <span style="color:var(--text3);font-size:12px;white-space:nowrap">入替候補なし</span>
+        </div>
+        <div style="font-size:12px;color:var(--text3);padding:6px 0">
+          スクリーニング上位40社に同業種（${cur.sector || 'セクター不明'}）の銘柄がありませんでした
+        </div>
+      </div>`;
+    }
+
     const candHtml = rec.replacements.map(c => {
       const divChange    = c.div_change    || 0;
       const divChangePct = c.div_change_pct || 0;
@@ -962,7 +986,17 @@ function renderAlerts(alerts) {
   }
   container.innerHTML = alerts.map(a => {
     if (a.type === 'error') return `<div class="alert-item"><span class="alert-type alert-err">ERROR</span><div class="alert-body"><div class="alert-title">${a.title}</div></div></div>`;
-    const typeCls  = a.type === 'dividend' ? 'alert-div' : 'alert-rev';
+    if (a.type === 'dividend_cut') {
+      return `
+      <div class="alert-item">
+        <span class="alert-type alert-cut">⚠️ 減配</span>
+        <div class="alert-body">
+          <div class="alert-title">${a.title}</div>
+          <div class="alert-meta">${a.code} ${a.company ? '/ ' + a.company : ''} &nbsp;|&nbsp; ${a.source || ''}</div>
+        </div>
+      </div>`;
+    }
+    const typeCls   = a.type === 'dividend' ? 'alert-div' : 'alert-rev';
     const typeLabel = a.type === 'dividend' ? '配当' : '業績修正';
     const link = a.url ? `<a class="alert-link" href="${a.url}" target="_blank">開示文書を開く →</a>` : '';
     return `
