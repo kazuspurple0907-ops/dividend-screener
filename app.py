@@ -404,6 +404,7 @@ def get_fins_all():
             headers = {'x-api-key': api_key}
             all_fins = {}
             consecutive_429 = 0
+            wait_count = 0  # 60秒待機の回数（上限2回）
             flog(f'fetch開始 (最大60日)')
             for delta in range(60):
                 d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
@@ -416,8 +417,12 @@ def get_fins_all():
                         retry_after = r.headers.get('Retry-After', 'N/A')
                         flog(f'429 delta={delta} d={d} consecutive={consecutive_429} Retry-After={retry_after}')
                         if consecutive_429 == 3:
-                            # レート制限ウィンドウリセット待ち（60秒）
-                            flog('3連続429 → 60秒待機してリセット待ち')
+                            wait_count += 1
+                            if wait_count > 2:
+                                # 3回目の429バースト → 日次クォータ枯渇の可能性。中断
+                                flog(f'3回目の429バースト → APIクォータ枯渇の可能性。中断します。')
+                                break
+                            flog(f'3連続429 → 60秒待機 ({wait_count}/2回目)')
                             time.sleep(60)
                             consecutive_429 = 0
                             continue  # 同じdeltaを再試行
