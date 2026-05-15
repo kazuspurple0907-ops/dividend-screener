@@ -1176,8 +1176,10 @@ window.addEventListener('DOMContentLoaded', async () => {
       }
     } catch (_) {}
   }
-  // バックグラウンドでfins_v2をプリフェッチ（スクリーニング準備）
-  fetch('/api/screen/prefetch', { method: 'POST' }).catch(() => {});
+  // ポートフォリオが空の場合のみprefetch（portfolioありの場合はデータ更新後にfins_v2が自動構築される）
+  if (!portfolio.length) {
+    fetch('/api/screen/prefetch', { method: 'POST' }).catch(() => {});
+  }
 });
 </script>
 <script>
