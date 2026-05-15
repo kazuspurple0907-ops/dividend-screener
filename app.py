@@ -1080,6 +1080,35 @@ def api_debug_fetch_one():
         import traceback
         return jsonify({'error': str(e), 'trace': traceback.format_exc()[-500:]}), 500
 
+@app.route('/api/debug/bulk_test')
+def api_debug_bulk_test():
+    """bulk fetch の動作確認（同期・タイムアウト付き）"""
+    import time as _time
+    results = {}
+    try:
+        t0 = _time.time()
+        api_key = get_api_key()
+        headers = {'x-api-key': api_key}
+        # 直接リクエスト（rate_wait なし）
+        r = requests.get(f'{JQUANTS_V2}/equities/master', headers=headers, params={}, timeout=15)
+        results['master_status'] = r.status_code
+        results['master_count'] = len(r.json().get('data', [])) if r.ok else 0
+        results['master_has_pagination'] = bool(r.json().get('pagination_key')) if r.ok else False
+        results['master_time_ms'] = int((_time.time() - t0) * 1000)
+    except Exception as e:
+        results['master_error'] = str(e)
+    try:
+        t1 = _time.time()
+        r2 = requests.get(f'{JQUANTS_V2}/fins/summary', headers=headers, params={}, timeout=15)
+        results['fins_status'] = r2.status_code
+        results['fins_count'] = len(r2.json().get('data', [])) if r2.ok else 0
+        results['fins_has_pagination'] = bool(r2.json().get('pagination_key')) if r2.ok else False
+        results['fins_time_ms'] = int((_time.time() - t1) * 1000)
+    except Exception as e:
+        results['fins_error'] = str(e)
+    results['bulk_lock_exists'] = os.path.exists(_BULK_LOCK_FILE)
+    return jsonify(results)
+
 @app.route('/api/debug/errors')
 def api_debug_errors():
     """リフレッシュエラーログを返す"""
