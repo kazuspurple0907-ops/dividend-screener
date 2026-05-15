@@ -339,44 +339,46 @@ def get_master_all():
     return get_cached('master_v2', fetch, ttl=86400)
 
 def get_fins_all():
-    """全銘柄の財務サマリーを date パラメータで過去90日分を3並列で取得（キャッシュ24h）"""
+    """全銘柄の財務サマリー取得（キャッシュ24h）
+    1. /fins/summary をページネーション一括取得（/equities/master と同じ方式）
+    2. 失敗時: 直近20日分を順次取得（429はスキップ、リトライなし）
+    """
     def fetch():
+        # 1. ページネーション一括取得を試みる
+        try:
+            rows = jq_get_bulk('/fins/summary')
+            if len(rows) >= 100:
+                latest = {}
+                for row in rows:
+                    code = row.get('Code', '')
+                    if code not in latest or row.get('DiscDate', '') > latest[code].get('DiscDate', ''):
+                        latest[code] = row
+                return latest
+        except Exception:
+            pass
+
+        # 2. フォールバック: 直近20日を順次取得（429はスキップ）
         api_key = get_api_key()
         headers = {'x-api-key': api_key}
         all_fins = {}
-        lock = threading.Lock()
-        done = [False]
-
-        def fetch_date(delta):
-            if done[0]:
-                return []
+        for delta in range(20):
             d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
-            for attempt in range(3):
-                try:
-                    r = requests.get(f'{JQUANTS_V2}/fins/summary',
-                                     headers=headers, params={'date': d}, timeout=15)
-                    if r.status_code == 429:
-                        time.sleep(5 * (attempt + 1))
-                        continue
-                    if r.ok:
-                        return r.json().get('data', [])
-                except Exception:
-                    pass
-            return []
-
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            futs = {ex.submit(fetch_date, d): d for d in range(90)}
-            for fut in as_completed(futs):
-                rows = fut.result()
-                with lock:
-                    for row in rows:
+            try:
+                r = requests.get(f'{JQUANTS_V2}/fins/summary',
+                                 headers=headers, params={'date': d}, timeout=15)
+                if r.status_code == 429:
+                    continue  # スキップ（リトライしない）
+                if r.ok:
+                    for row in r.json().get('data', []):
                         code = row.get('Code', '')
                         if code not in all_fins or row.get('DiscDate', '') > all_fins[code].get('DiscDate', ''):
                             all_fins[code] = row
-                    if len(all_fins) >= 3000:
-                        done[0] = True
-
+                if len(all_fins) >= 1500:
+                    break
+            except Exception:
+                continue
         return all_fins
+
     return get_cached('fins_v2', fetch, ttl=86400)  # 24h
 
 # ============================================================
