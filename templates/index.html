@@ -545,8 +545,31 @@ let portfolio = [];
 let portfolioMetrics = [];
 let lastScreenResults = [];
 
+function _savePortfolioLocal(pf) {
+  if (pf && pf.length > 0) {
+    try { localStorage.setItem('pf_backup', JSON.stringify(pf)); } catch(_) {}
+  }
+}
+
 async function loadPortfolio() {
   portfolio = await api('/api/portfolio');
+
+  // Railwayリデプロイでサーバーデータが消えた場合、localStorageから自動復元
+  if (!portfolio.length) {
+    try {
+      const saved = localStorage.getItem('pf_backup');
+      if (saved) {
+        const backup = JSON.parse(saved);
+        if (backup.length > 0) {
+          portfolio = backup;
+          await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
+          toast('ポートフォリオをバックアップから復元しました (' + portfolio.length + '銘柄)');
+        }
+      }
+    } catch(_) {}
+  }
+
+  _savePortfolioLocal(portfolio);
   renderPortfolioTable(portfolio.map(s => ({ ...s })));
 }
 
@@ -576,6 +599,7 @@ async function addStock() {
 
   portfolio.push({ code, name, shares, avg_price: avg, memo });
   await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
+  _savePortfolioLocal(portfolio);
 
   ['in-code','in-name','in-shares','in-avg','in-memo'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('add-stock-form').classList.remove('open');
@@ -586,6 +610,7 @@ async function addStock() {
 async function removeStock(code) {
   portfolio = portfolio.filter(s => s.code !== code);
   await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
+  _savePortfolioLocal(portfolio);
   toast(`${code} を削除しました`);
   await loadPortfolioMetrics();
 }
@@ -601,7 +626,7 @@ async function importCSV() {
     const d = await r.json();
     if (!d.ok) throw new Error(d.message);
     toggleImportArea('csv-import-area');
-    await loadPortfolio();
+    await loadPortfolio();  // loadPortfolio内でlocalStorageに保存される
     toast(`${d.imported}件をインポートしました。指標を取得中...（約5〜10秒）`);
     await loadPortfolioMetrics();
   } catch (e) {
