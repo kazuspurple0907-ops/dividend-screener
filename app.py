@@ -339,35 +339,43 @@ def get_master_all():
     return get_cached('master_v2', fetch, ttl=86400)
 
 def get_fins_all():
-    """全銘柄の財務サマリーを date パラメータで過去90日分累積取得（キャッシュ24h）"""
+    """全銘柄の財務サマリーを date パラメータで過去90日分を3並列で取得（キャッシュ24h）"""
     def fetch():
         api_key = get_api_key()
         headers = {'x-api-key': api_key}
         all_fins = {}
-        for delta in range(90):
+        lock = threading.Lock()
+        done = [False]
+
+        def fetch_date(delta):
+            if done[0]:
+                return []
             d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
-            try:
-                with _jquants_sem:
+            for attempt in range(3):
+                try:
                     r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                      headers=headers, params={'date': d}, timeout=15)
-                    for wait in (5, 10, 20):
-                        if r.status_code != 429:
-                            break
-                        time.sleep(wait)
-                        r = requests.get(f'{JQUANTS_V2}/fins/summary',
-                                         headers=headers, params={'date': d}, timeout=15)
-                if not r.ok:
-                    continue
-                rows = r.json().get('data', [])
-                for row in rows:
-                    code = row.get('Code', '')
-                    if code not in all_fins or row.get('DiscDate', '') > all_fins[code].get('DiscDate', ''):
-                        all_fins[code] = row
-                # 上場銘柄全体の7割程度を超えたら十分
-                if len(all_fins) >= 3000:
-                    break
-            except Exception:
-                continue
+                    if r.status_code == 429:
+                        time.sleep(5 * (attempt + 1))
+                        continue
+                    if r.ok:
+                        return r.json().get('data', [])
+                except Exception:
+                    pass
+            return []
+
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            futs = {ex.submit(fetch_date, d): d for d in range(90)}
+            for fut in as_completed(futs):
+                rows = fut.result()
+                with lock:
+                    for row in rows:
+                        code = row.get('Code', '')
+                        if code not in all_fins or row.get('DiscDate', '') > all_fins[code].get('DiscDate', ''):
+                            all_fins[code] = row
+                    if len(all_fins) >= 3000:
+                        done[0] = True
+
         return all_fins
     return get_cached('fins_v2', fetch, ttl=86400)  # 24h
 
