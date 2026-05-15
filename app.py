@@ -390,7 +390,8 @@ def get_fins_all():
 
         def fetch():
             # /fins/summary は日付なしでは 400 → 直近60日を日付別取得
-            # 1秒インターバルで安定取得（60日 × 1s = 約60秒）
+            # 最初に_jq_rate_wait()でmasterビルド後のクールダウンを待ち、
+            # その後は2秒インターバル（~30 req/min, J-Quants制限内）
             fins_log = os.path.join(DATA_DIR, 'fins_build.log')
             def flog(msg):
                 try:
@@ -404,10 +405,11 @@ def get_fins_all():
             all_fins = {}
             consecutive_429 = 0
             flog(f'fetch開始 (最大60日)')
+            _jq_rate_wait()  # masterビルドのAPI使用分を待つ（初回のみ）
             for delta in range(60):
                 d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
                 try:
-                    time.sleep(1)  # レート制限対策（1秒インターバル）
+                    time.sleep(2)  # 2秒インターバル（~30req/min）
                     r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                      headers=headers, params={'date': d}, timeout=15)
                     if r.status_code == 429:
