@@ -333,15 +333,10 @@ def jq_get_bulk(endpoint, params=None):
     all_data = []
     p = dict(params or {})
     while True:
-        r = None
-        for wait in (0, 3, 8, 15):
-            if wait:
-                time.sleep(wait)   # セマフォを解放した状態で待機
-            _jq_rate_wait()
-            with _jquants_sem:     # リクエスト中のみセマフォ確保
-                r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers, params=p, timeout=30)
-            if r.status_code != 429:
-                break
+        _jq_rate_wait()
+        with _jquants_sem:
+            r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers, params=p, timeout=30)
+        # 429はすぐに失敗（リトライしない。APIをこれ以上叩かない）
         r.raise_for_status()
         body = r.json()
         chunk = body.get('data', [])
@@ -394,19 +389,22 @@ def get_fins_all():
                 pass
 
         def fetch():
-            # /fins/summary は日付・コードなしでは 400 が返るのでスキップ
-            # 直近30日を日付別に取得（_jq_rate_wait なし：日付指定はレート緩め）
+            # /fins/summary は日付なしでは 400 → 直近30日を日付別取得
             api_key = get_api_key()
             headers = {'x-api-key': api_key}
             all_fins = {}
+            consecutive_429 = 0
             for delta in range(30):
                 d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
                 try:
                     r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                      headers=headers, params={'date': d}, timeout=15)
                     if r.status_code == 429:
-                        time.sleep(3)
-                        continue
+                        consecutive_429 += 1
+                        if consecutive_429 >= 3:
+                            break  # 3連続429 → 諦める
+                        continue   # sleepなし（APIを叩かない）
+                    consecutive_429 = 0
                     if r.ok:
                         for row in r.json().get('data', []):
                             code = row.get('Code', '')
@@ -418,7 +416,14 @@ def get_fins_all():
                     continue
             return all_fins
 
-        return get_cached('fins_v2', fetch, ttl=86400)
+        all_fins = fetch()
+        if len(all_fins) < 100:
+            return all_fins  # データ不足はキャッシュしない（次回また取得する）
+
+        fins_v2_file2 = os.path.join(CACHE_DIR, 'fins_v2.json')
+        with open(fins_v2_file2, 'w', encoding='utf-8') as f:
+            json.dump(all_fins, f, ensure_ascii=False)
+        return all_fins
     finally:
         _bulk_lock_release()
 
@@ -1067,35 +1072,6 @@ def api_debug_fetch_one():
         import traceback
         return jsonify({'error': str(e), 'trace': traceback.format_exc()[-500:]}), 500
 
-@app.route('/api/debug/bulk_test')
-def api_debug_bulk_test():
-    """bulk fetch の動作確認（同期・タイムアウト付き）"""
-    import time as _time
-    results = {}
-    try:
-        t0 = _time.time()
-        api_key = get_api_key()
-        headers = {'x-api-key': api_key}
-        # 直接リクエスト（rate_wait なし）
-        r = requests.get(f'{JQUANTS_V2}/equities/master', headers=headers, params={}, timeout=15)
-        results['master_status'] = r.status_code
-        results['master_count'] = len(r.json().get('data', [])) if r.ok else 0
-        results['master_has_pagination'] = bool(r.json().get('pagination_key')) if r.ok else False
-        results['master_time_ms'] = int((_time.time() - t0) * 1000)
-    except Exception as e:
-        results['master_error'] = str(e)
-    try:
-        t1 = _time.time()
-        r2 = requests.get(f'{JQUANTS_V2}/fins/summary', headers=headers, params={}, timeout=15)
-        results['fins_status'] = r2.status_code
-        results['fins_count'] = len(r2.json().get('data', [])) if r2.ok else 0
-        results['fins_has_pagination'] = bool(r2.json().get('pagination_key')) if r2.ok else False
-        results['fins_time_ms'] = int((_time.time() - t1) * 1000)
-    except Exception as e:
-        results['fins_error'] = str(e)
-    results['bulk_lock_exists'] = os.path.exists(_BULK_LOCK_FILE)
-    return jsonify(results)
-
 @app.route('/api/debug/errors')
 def api_debug_errors():
     """リフレッシュエラーログを返す"""
@@ -1109,10 +1085,13 @@ def api_debug_errors():
         'write_test_exists': os.path.exists(test_file),
         'refresh_running':  _refresh_running[0],
         'errors':           open(err_file).read() if os.path.exists(err_file) else 'none',
-        'fn_files':         len([f for f in cache_files if f.startswith('fn_')]),
-        'ms_files':         len([f for f in cache_files if f.startswith('ms_')]),
-        'rt_files':         len([f for f in cache_files if f.startswith('rt_')]),
-        'log_tail':         open(log_file).read()[-800:] if os.path.exists(log_file) else 'none',
+        'fn_files':           len([f for f in cache_files if f.startswith('fn_')]),
+        'ms_files':           len([f for f in cache_files if f.startswith('ms_')]),
+        'rt_files':           len([f for f in cache_files if f.startswith('rt_')]),
+        'master_v2_exists':   os.path.exists(os.path.join(CACHE_DIR, 'master_v2.json')),
+        'fins_v2_exists':     os.path.exists(os.path.join(CACHE_DIR, 'fins_v2.json')),
+        'bulk_lock_exists':   os.path.exists(_BULK_LOCK_FILE),
+        'log_tail':           open(log_file).read()[-800:] if os.path.exists(log_file) else 'none',
     }
     return jsonify(result)
 
