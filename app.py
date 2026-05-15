@@ -28,15 +28,39 @@ PORTFOLIO_FILE = os.path.join(DATA_DIR, 'portfolio.json')
 JQUANTS_V2     = 'https://api.jquants.com/v2'
 
 # J-Quants レート制限対策
-# - セマフォ: 同時リクエスト数を 2 に制限
-# - レートリミッター: リクエスト間隔を最低 2 秒に保つ（≤30 req/min）
-_jquants_sem  = threading.Semaphore(2)
+_jquants_sem  = threading.Semaphore(1)   # 同時1リクエストに絞る（429防止）
 _jq_rate_lock = threading.Lock()
 _jq_next_ok   = [0.0]
-_JQ_INTERVAL  = 3.0   # 秒（調整可: 小さいほど速いが 429 リスク増）
+_JQ_INTERVAL  = 3.0
 _refresh_lock = threading.Lock()
 _refresh_running = [False]
-_fins_v2_lock = threading.Lock()   # fins_v2 ビルドを1スレッドに制限
+
+# fins_v2 / master_v2 bulk ビルドのロック（ファイルベース：ワーカー間共有）
+_BULK_LOCK_FILE = os.path.join(DATA_DIR, 'bulk_building.lock')
+
+def _bulk_lock_acquire():
+    """ファイルベースのロック取得。成功時True、既にビルド中はFalse"""
+    # 古いロックは5分で期限切れ扱い
+    if os.path.exists(_BULK_LOCK_FILE):
+        age = time.time() - os.path.getmtime(_BULK_LOCK_FILE)
+        if age < 300:
+            return False
+        try: os.remove(_BULK_LOCK_FILE)
+        except Exception: pass
+    try:
+        # POSIX atomic create-exclusive
+        fd = os.open(_BULK_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+    except Exception:
+        return False
+
+def _bulk_lock_release():
+    try: os.remove(_BULK_LOCK_FILE)
+    except Exception: pass
 
 def _jq_rate_wait():
     """J-Quants API リクエスト前にレート間隔を保証（グローバル・直列）"""
@@ -329,6 +353,7 @@ def jq_get_bulk(endpoint, params=None):
     return all_data
 
 def get_master_all():
+    """全銘柄マスター取得（bulk_lockで同時ビルドを1ワーカーに制限）"""
     def fetch():
         rows = jq_get_bulk('/equities/master')
         latest = {}
@@ -341,11 +366,12 @@ def get_master_all():
 
 def get_fins_all():
     """全銘柄の財務サマリー取得（キャッシュ24h）
-    - _fins_v2_lock で同時ビルドを1スレッドに制限（J-Quants レート競合防止）
-    - 1. /fins/summary をページネーション一括取得
-    - 2. 失敗時: 直近30日分を順次取得（429はスキップ）
+    ファイルロックで全ワーカーの同時ビルドを1つに制限。
+    1. /fins/summary をページネーション一括取得
+    2. 失敗時: 直近30日分を日付別に順次取得（429はスキップ）
     """
     fins_v2_file = os.path.join(CACHE_DIR, 'fins_v2.json')
+
     # キャッシュが新鮮なら即リターン
     if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 86400:
         try:
@@ -354,12 +380,12 @@ def get_fins_all():
         except Exception:
             pass
 
-    # すでにビルド中なら待たずに return {}（呼び出し元が再試行する）
-    if not _fins_v2_lock.acquire(blocking=False):
+    # 別ワーカーがすでにビルド中 → 空を返す（run_screeningはNoneで待機）
+    if not _bulk_lock_acquire():
         return {}
 
     try:
-        # ダブルチェック：待機中に別スレッドがビルド完了した場合
+        # ダブルチェック
         if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 86400:
             try:
                 with open(fins_v2_file) as f:
@@ -368,7 +394,7 @@ def get_fins_all():
                 pass
 
         def fetch():
-            # 1. ページネーション一括取得を試みる
+            # 1. ページネーション一括取得
             try:
                 rows = jq_get_bulk('/fins/summary')
                 if len(rows) >= 100:
@@ -381,16 +407,18 @@ def get_fins_all():
             except Exception:
                 pass
 
-            # 2. フォールバック: 直近30日を順次取得（429はスキップ）
+            # 2. フォールバック: 直近30日を日付別取得
             api_key = get_api_key()
             headers = {'x-api-key': api_key}
             all_fins = {}
             for delta in range(30):
                 d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
                 try:
+                    _jq_rate_wait()
                     r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                      headers=headers, params={'date': d}, timeout=15)
                     if r.status_code == 429:
+                        time.sleep(5)
                         continue
                     if r.ok:
                         for row in r.json().get('data', []):
@@ -405,7 +433,7 @@ def get_fins_all():
 
         return get_cached('fins_v2', fetch, ttl=86400)
     finally:
-        _fins_v2_lock.release()
+        _bulk_lock_release()
 
 # ============================================================
 # Yahoo Finance リアルタイム価格
@@ -1429,19 +1457,28 @@ def api_screen():
 
 @app.route('/api/screen/prefetch', methods=['POST'])
 def api_screen_prefetch():
-    """バルク銘柄マスター＋fins を date別に取得してキャッシュ（バックグラウンド向け）"""
+    """バルク銘柄マスター＋fins を取得してキャッシュ（ファイルロックで重複防止）"""
+    fins_v2_file = os.path.join(CACHE_DIR, 'fins_v2.json')
+    if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 86400:
+        return jsonify({'ok': True, 'message': 'すでにキャッシュ済みです'})
+
+    if os.path.exists(_BULK_LOCK_FILE):
+        age = time.time() - os.path.getmtime(_BULK_LOCK_FILE)
+        if age < 300:
+            return jsonify({'ok': True, 'message': 'バックグラウンドで取得中です'})
+
     def do_fetch():
         try:
-            get_master_all()   # master_v2.json にキャッシュ
+            get_master_all()
         except Exception:
             pass
         try:
-            get_fins_all()     # fins_v2.json にキャッシュ
+            get_fins_all()
         except Exception:
             pass
     t = threading.Thread(target=do_fetch, daemon=True)
     t.start()
-    return jsonify({'ok': True, 'message': 'バックグラウンドで取得開始しました（完了まで数分かかります）'})
+    return jsonify({'ok': True, 'message': 'バックグラウンドで取得開始しました（約10〜30秒）'})
 
 @app.route('/api/recommendations')
 def api_recommendations():
