@@ -618,15 +618,10 @@ def run_screening(portfolio_codes=None):
     if portfolio_codes is None:
         portfolio_codes = {s.get('code', '')[:4] for s in load_portfolio()}
 
-    # 1. master_v2.json（必須 — なければ同期ビルド）
+    # 1. master_v2.json（必須）
     bulk_master_file = os.path.join(CACHE_DIR, 'master_v2.json')
     if not os.path.exists(bulk_master_file):
-        try:
-            get_master_all()
-        except Exception:
-            return None
-    if not os.path.exists(bulk_master_file):
-        return None
+        return None  # 準備未完了
 
     try:
         with open(bulk_master_file) as f:
@@ -634,16 +629,11 @@ def run_screening(portfolio_codes=None):
     except Exception:
         return None
 
-    # 2. fins: fins_v2.json（必須 — なければ同期ビルド、約8秒）
+    # 2. fins: fins_v2.json が必須（全銘柄スクリーニングには全銘柄データが必要）
     fins_bulk = {}
     fins_v2_file = os.path.join(CACHE_DIR, 'fins_v2.json')
     if not os.path.exists(fins_v2_file):
-        try:
-            get_fins_all()
-        except Exception:
-            return None
-    if not os.path.exists(fins_v2_file):
-        return None
+        return None  # fins_v2.json なし → バックグラウンドで取得中
 
     try:
         with open(fins_v2_file) as f:
@@ -652,16 +642,7 @@ def run_screening(portfolio_codes=None):
         return None
 
     if len(fins_bulk) < 100:
-        # データ不足なら再取得して再試行
-        try:
-            os.remove(fins_v2_file)
-            get_fins_all()
-            with open(fins_v2_file) as f:
-                fins_bulk = json.load(f)
-        except Exception:
-            return None
-    if len(fins_bulk) < 100:
-        return None
+        return None  # データが少なすぎる（取得途中 or 失敗）
 
     # 個別 fn_ ファイルで上書き（より新しい・正確なデータ）
     for fname in os.listdir(CACHE_DIR):
@@ -1410,8 +1391,16 @@ def api_screen():
         portfolio_codes = {s.get('code', '')[:4] for s in load_portfolio()}
         results = run_screening(portfolio_codes)
         if results is None:
+            # fins_v2.json 未整備 → バックグラウンドで取得開始
+            def _do_prefetch():
+                try: get_master_all()
+                except Exception: pass
+                try: get_fins_all()
+                except Exception: pass
+            threading.Thread(target=_do_prefetch, daemon=True).start()
             return jsonify({
-                'warning': 'データ取得に失敗しました。J-Quants APIキーを確認してください。',
+                'building': True,
+                'warning': '全銘柄データを取得中です（初回のみ約10秒）。自動的に再試行します...',
                 'data': []
             })
         return jsonify(results)
