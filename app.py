@@ -456,7 +456,12 @@ def get_fins_all():
                             if code not in all_fins or row.get('DiscDate', '') > all_fins[code].get('DiscDate', ''):
                                 all_fins[code] = row
                         added = len(all_fins) - cnt_before
-                        flog(f'd={d} +{added}件 累計={len(all_fins)}')
+                        if added > 0:
+                            flog(f'd={d} +{added}件 累計={len(all_fins)}')
+                        else:
+                            flog(f'd={d} 0件(空)')
+                    else:
+                        flog(f'd={d} HTTP {r.status_code} body={r.text[:200]}')
                     if len(all_fins) >= 2000:
                         flog(f'2000件達成 → 完了')
                         break
@@ -1069,6 +1074,32 @@ def api_cache_clear():
             except Exception:
                 os.remove(fpath); removed += 1
     return jsonify({'ok': True, 'removed': removed})
+
+@app.route('/api/debug/fins_date')
+def api_debug_fins_date():
+    """デバッグ用: 日付ベースのfins/summaryレスポンスを確認"""
+    date = request.args.get('date', '2026-04-30')
+    try:
+        key = get_api_key()
+        r = requests.get(f'{JQUANTS_V2}/fins/summary',
+                         headers={'x-api-key': key},
+                         params={'date': date}, timeout=15)
+        try:
+            body = r.json()
+        except Exception:
+            body = r.text[:500]
+        data_rows = body.get('data', []) if isinstance(body, dict) else []
+        return jsonify({
+            'date': date,
+            'status': r.status_code,
+            'ok': r.ok,
+            'count': len(data_rows),
+            'sample': data_rows[:3],
+            'raw_if_error': body if not r.ok else None,
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()[-500:]}), 500
 
 @app.route('/api/debug/stock')
 def api_debug_stock():
