@@ -830,30 +830,49 @@ function renderDpsChart(history) {
 // ============================================================
 // スクリーニング
 // ============================================================
-async function runScreen() {
+let _screenRetryTimer = null;
+
+async function runScreen(isAutoRetry) {
   const btn = document.getElementById('screen-btn');
   const ldr = document.getElementById('screen-loader');
-  btn.disabled = true; ldr.innerHTML = '<span class="loader"></span>';
-  document.getElementById('screen-count').textContent = '取得中...';
+  const countEl = document.getElementById('screen-count');
+
+  if (!isAutoRetry) {
+    // 手動実行：リトライタイマーをリセット
+    clearTimeout(_screenRetryTimer);
+    btn.disabled = true;
+    ldr.innerHTML = '<span class="loader"></span>';
+    countEl.textContent = '取得中...';
+  }
 
   try {
     const resp = await api('/api/screen');
-    // {warning, data} 形式 or 配列
     const results = Array.isArray(resp) ? resp : (resp.data || []);
-    if (resp.warning) {
-      toast(resp.warning, 'err');
-      document.getElementById('screen-count').textContent = 'データなし（先に「データ更新」を実行してください）';
-      renderScreenTable([]);
+
+    if (resp.building) {
+      // バックグラウンドでfins_v2を構築中 → 15秒後に自動リトライ
+      countEl.textContent = '全銘柄データを準備中...（初回のみ数秒かかります）';
+      ldr.innerHTML = '<span class="loader"></span>';
+      _screenRetryTimer = setTimeout(() => runScreen(true), 10000);
       return;
     }
+
+    if (resp.warning && !resp.building) {
+      toast(resp.warning, 'err');
+      countEl.textContent = 'エラー: ' + resp.warning;
+      renderScreenTable([]);
+      btn.disabled = false; ldr.innerHTML = '';
+      return;
+    }
+
     lastScreenResults = results;
     renderScreenTable(results);
     const allMet = results.filter(r => r.all_conditions).length;
-    document.getElementById('screen-count').textContent = `${results.length}件ヒット（全条件合致: ${allMet}件）`;
-    toast(`${results.length}件ヒット（全条件合致: ${allMet}件）`);
+    countEl.textContent = `${results.length}件ヒット（全条件合致: ${allMet}件）`;
+    if (!isAutoRetry) toast(`${results.length}件ヒット（全条件合致: ${allMet}件）`);
   } catch (e) {
     toast(e.message, 'err');
-    document.getElementById('screen-count').textContent = '';
+    countEl.textContent = '';
   }
 
   btn.disabled = false; ldr.innerHTML = '';
@@ -1157,6 +1176,8 @@ window.addEventListener('DOMContentLoaded', async () => {
       }
     } catch (_) {}
   }
+  // バックグラウンドでfins_v2をプリフェッチ（スクリーニング準備）
+  fetch('/api/screen/prefetch', { method: 'POST' }).catch(() => {});
 });
 </script>
 <script>
