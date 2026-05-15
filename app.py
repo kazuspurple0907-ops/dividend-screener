@@ -407,9 +407,9 @@ def get_fins_all():
                 pass
 
         def fetch():
-            # /fins/summary は日付なしでは 400 → 直近60日を日付別取得
+            # /fins/summary は日付なしでは 400 → 日付別取得
+            # サブスクリプション上限日を自動検出して、そこから遡る
             # _jq_bulk_rate_wait() で 15秒間隔（~4リクエスト/分）を保証
-            # ポートフォリオ個別取得の _jq_rate_wait() とは独立したタイマーを使用
             fins_log = os.path.join(DATA_DIR, 'fins_build.log')
             def flog(msg):
                 try:
@@ -422,10 +422,17 @@ def get_fins_all():
             headers = {'x-api-key': api_key}
             all_fins = {}
             consecutive_429 = 0
-            wait_count = 0  # 90秒待機の回数（上限10回）
-            flog(f'fetch開始 (最大60日, 週末スキップ, 15秒間隔)')
-            for delta in range(60):
-                d_obj = datetime.now() - timedelta(days=delta)
+            wait_count = 0
+            sub_end_detected = False  # サブスクリプション上限日の検出フラグ
+            start_date = datetime.now()
+            max_delta = 90
+            delta = 0
+
+            flog(f'fetch開始 (最大{max_delta}日, 週末スキップ, 15秒間隔)')
+
+            while delta < max_delta:
+                d_obj = start_date - timedelta(days=delta)
+                delta += 1
                 # 週末はスキップ（土=5, 日=6 — 決算発表なし）
                 if d_obj.weekday() >= 5:
                     continue
@@ -434,10 +441,11 @@ def get_fins_all():
                     _jq_bulk_rate_wait()  # バルク専用レートリミッター（15秒間隔）
                     r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                      headers=headers, params={'date': d}, timeout=15)
+
                     if r.status_code == 429:
                         consecutive_429 += 1
-                        retry_after = r.headers.get('Retry-After', 'N/A')
-                        flog(f'429 delta={delta} d={d} consecutive={consecutive_429} Retry-After={retry_after}')
+                        delta -= 1  # 同じ日を再試行するためにdeltaを戻す
+                        flog(f'429 d={d} consecutive={consecutive_429}')
                         if consecutive_429 >= 3:
                             wait_count += 1
                             if wait_count > 10:
@@ -446,8 +454,22 @@ def get_fins_all():
                             flog(f'3連続429 → 90秒待機 ({wait_count}/10回目)')
                             time.sleep(90)
                             consecutive_429 = 0
-                            continue  # 同じdeltaを再試行
                         continue
+
+                    if r.status_code == 400 and not sub_end_detected:
+                        # サブスクリプション期間外チェック
+                        import re as _re
+                        m = _re.search(r'(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})', r.text)
+                        if m:
+                            sub_end_str = m.group(2)
+                            flog(f'サブスクリプション範囲: {m.group(1)} ~ {sub_end_str} → {sub_end_str}から遡る')
+                            start_date = datetime.strptime(sub_end_str, '%Y-%m-%d')
+                            sub_end_detected = True
+                            delta = 0  # 新しい start_date からリスタート
+                            continue
+                        flog(f'd={d} HTTP 400: {r.text[:200]}')
+                        continue
+
                     consecutive_429 = 0
                     if r.ok:
                         cnt_before = len(all_fins)
@@ -462,12 +484,14 @@ def get_fins_all():
                             flog(f'd={d} 0件(空)')
                     else:
                         flog(f'd={d} HTTP {r.status_code} body={r.text[:200]}')
+
                     if len(all_fins) >= 2000:
-                        flog(f'2000件達成 → 完了')
+                        flog('2000件達成 → 完了')
                         break
                 except Exception as e:
                     flog(f'd={d} error={e}')
                     continue
+
             flog(f'fetch完了 合計={len(all_fins)}件')
             return all_fins
 
