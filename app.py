@@ -28,7 +28,7 @@ PORTFOLIO_FILE = os.path.join(DATA_DIR, 'portfolio.json')
 JQUANTS_V2     = 'https://api.jquants.com/v2'
 
 # J-Quants レート制限対策
-_jquants_sem  = threading.Semaphore(1)   # 同時1リクエストに絞る（429防止）
+_jquants_sem  = threading.Semaphore(2)   # 同時2リクエストまで許可
 _jq_rate_lock = threading.Lock()
 _jq_next_ok   = [0.0]
 _JQ_INTERVAL  = 3.0
@@ -336,9 +336,9 @@ def jq_get_bulk(endpoint, params=None):
         r = None
         for wait in (0, 3, 8, 15):
             if wait:
-                time.sleep(wait)
+                time.sleep(wait)   # セマフォを解放した状態で待機
             _jq_rate_wait()
-            with _jquants_sem:
+            with _jquants_sem:     # リクエスト中のみセマフォ確保
                 r = requests.get(f'{JQUANTS_V2}{endpoint}', headers=headers, params=p, timeout=30)
             if r.status_code != 429:
                 break
