@@ -1458,8 +1458,11 @@ def api_screen():
 @app.route('/api/screen/prefetch', methods=['POST'])
 def api_screen_prefetch():
     """バルク銘柄マスター＋fins を取得してキャッシュ（ファイルロックで重複防止）"""
-    fins_v2_file = os.path.join(CACHE_DIR, 'fins_v2.json')
-    if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 86400:
+    fins_v2_file   = os.path.join(CACHE_DIR, 'fins_v2.json')
+    master_v2_file = os.path.join(CACHE_DIR, 'master_v2.json')
+    fins_ok   = os.path.exists(fins_v2_file)   and (time.time() - os.path.getmtime(fins_v2_file))   < 86400
+    master_ok = os.path.exists(master_v2_file) and (time.time() - os.path.getmtime(master_v2_file)) < 86400
+    if fins_ok and master_ok:
         return jsonify({'ok': True, 'message': 'すでにキャッシュ済みです'})
 
     if os.path.exists(_BULK_LOCK_FILE):
