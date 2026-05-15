@@ -36,6 +36,7 @@ _jq_next_ok   = [0.0]
 _JQ_INTERVAL  = 3.0   # 秒（調整可: 小さいほど速いが 429 リスク増）
 _refresh_lock = threading.Lock()
 _refresh_running = [False]
+_fins_v2_lock = threading.Lock()   # fins_v2 ビルドを1スレッドに制限
 
 def _jq_rate_wait():
     """J-Quants API リクエスト前にレート間隔を保証（グローバル・直列）"""
@@ -340,46 +341,71 @@ def get_master_all():
 
 def get_fins_all():
     """全銘柄の財務サマリー取得（キャッシュ24h）
-    1. /fins/summary をページネーション一括取得（/equities/master と同じ方式）
-    2. 失敗時: 直近20日分を順次取得（429はスキップ、リトライなし）
+    - _fins_v2_lock で同時ビルドを1スレッドに制限（J-Quants レート競合防止）
+    - 1. /fins/summary をページネーション一括取得
+    - 2. 失敗時: 直近30日分を順次取得（429はスキップ）
     """
-    def fetch():
-        # 1. ページネーション一括取得を試みる
+    fins_v2_file = os.path.join(CACHE_DIR, 'fins_v2.json')
+    # キャッシュが新鮮なら即リターン
+    if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 86400:
         try:
-            rows = jq_get_bulk('/fins/summary')
-            if len(rows) >= 100:
-                latest = {}
-                for row in rows:
-                    code = row.get('Code', '')
-                    if code not in latest or row.get('DiscDate', '') > latest[code].get('DiscDate', ''):
-                        latest[code] = row
-                return latest
+            with open(fins_v2_file) as f:
+                return json.load(f)
         except Exception:
             pass
 
-        # 2. フォールバック: 直近20日を順次取得（429はスキップ）
-        api_key = get_api_key()
-        headers = {'x-api-key': api_key}
-        all_fins = {}
-        for delta in range(20):
-            d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
-            try:
-                r = requests.get(f'{JQUANTS_V2}/fins/summary',
-                                 headers=headers, params={'date': d}, timeout=15)
-                if r.status_code == 429:
-                    continue  # スキップ（リトライしない）
-                if r.ok:
-                    for row in r.json().get('data', []):
-                        code = row.get('Code', '')
-                        if code not in all_fins or row.get('DiscDate', '') > all_fins[code].get('DiscDate', ''):
-                            all_fins[code] = row
-                if len(all_fins) >= 1500:
-                    break
-            except Exception:
-                continue
-        return all_fins
+    # すでにビルド中なら待たずに return {}（呼び出し元が再試行する）
+    if not _fins_v2_lock.acquire(blocking=False):
+        return {}
 
-    return get_cached('fins_v2', fetch, ttl=86400)  # 24h
+    try:
+        # ダブルチェック：待機中に別スレッドがビルド完了した場合
+        if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 86400:
+            try:
+                with open(fins_v2_file) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+
+        def fetch():
+            # 1. ページネーション一括取得を試みる
+            try:
+                rows = jq_get_bulk('/fins/summary')
+                if len(rows) >= 100:
+                    latest = {}
+                    for row in rows:
+                        code = row.get('Code', '')
+                        if code not in latest or row.get('DiscDate', '') > latest[code].get('DiscDate', ''):
+                            latest[code] = row
+                    return latest
+            except Exception:
+                pass
+
+            # 2. フォールバック: 直近30日を順次取得（429はスキップ）
+            api_key = get_api_key()
+            headers = {'x-api-key': api_key}
+            all_fins = {}
+            for delta in range(30):
+                d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
+                try:
+                    r = requests.get(f'{JQUANTS_V2}/fins/summary',
+                                     headers=headers, params={'date': d}, timeout=15)
+                    if r.status_code == 429:
+                        continue
+                    if r.ok:
+                        for row in r.json().get('data', []):
+                            code = row.get('Code', '')
+                            if code not in all_fins or row.get('DiscDate', '') > all_fins[code].get('DiscDate', ''):
+                                all_fins[code] = row
+                    if len(all_fins) >= 1500:
+                        break
+                except Exception:
+                    continue
+            return all_fins
+
+        return get_cached('fins_v2', fetch, ttl=86400)
+    finally:
+        _fins_v2_lock.release()
 
 # ============================================================
 # Yahoo Finance リアルタイム価格
@@ -1391,16 +1417,10 @@ def api_screen():
         portfolio_codes = {s.get('code', '')[:4] for s in load_portfolio()}
         results = run_screening(portfolio_codes)
         if results is None:
-            # fins_v2.json 未整備 → バックグラウンドで取得開始
-            def _do_prefetch():
-                try: get_master_all()
-                except Exception: pass
-                try: get_fins_all()
-                except Exception: pass
-            threading.Thread(target=_do_prefetch, daemon=True).start()
+            # fins_v2.json 未整備（ポートフォリオ更新後に自動構築されます）
             return jsonify({
                 'building': True,
-                'warning': '全銘柄データを取得中です（初回のみ約10秒）。自動的に再試行します...',
+                'warning': '全銘柄データを準備中です。「データ更新」を実行すると10秒ほどで使えるようになります。',
                 'data': []
             })
         return jsonify(results)
