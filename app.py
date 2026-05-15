@@ -405,20 +405,25 @@ def get_fins_all():
             all_fins = {}
             consecutive_429 = 0
             flog(f'fetch開始 (最大60日)')
-            _jq_rate_wait()  # masterビルドのAPI使用分を待つ（初回のみ）
             for delta in range(60):
                 d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
                 try:
-                    time.sleep(2)  # 2秒インターバル（~30req/min）
+                    _jq_rate_wait()  # グローバルレート制限（master/fins共通で3秒間隔を保証）
                     r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                      headers=headers, params={'date': d}, timeout=15)
                     if r.status_code == 429:
                         consecutive_429 += 1
-                        flog(f'429 delta={delta} d={d} (consecutive={consecutive_429})')
-                        if consecutive_429 >= 5:
-                            flog('5連続429 → 中断')
-                            break  # 5連続429 → 諦める
-                        time.sleep(3)  # 429時は3秒待って次へ
+                        retry_after = r.headers.get('Retry-After', 'N/A')
+                        flog(f'429 delta={delta} d={d} consecutive={consecutive_429} Retry-After={retry_after}')
+                        if consecutive_429 == 3:
+                            # レート制限ウィンドウリセット待ち（60秒）
+                            flog('3連続429 → 60秒待機してリセット待ち')
+                            time.sleep(60)
+                            consecutive_429 = 0
+                            continue  # 同じdeltaを再試行
+                        if consecutive_429 >= 6:
+                            flog('リセット後も429継続 → 中断')
+                            break
                         continue
                     consecutive_429 = 0
                     if r.ok:
