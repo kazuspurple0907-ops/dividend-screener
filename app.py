@@ -389,31 +389,52 @@ def get_fins_all():
                 pass
 
         def fetch():
-            # /fins/summary は日付なしでは 400 → 直近30日を日付別取得
+            # /fins/summary は日付なしでは 400 → 直近60日を日付別取得
+            # 1秒インターバルで安定取得（60日 × 1s = 約60秒）
+            fins_log = os.path.join(DATA_DIR, 'fins_build.log')
+            def flog(msg):
+                try:
+                    with open(fins_log, 'a') as f:
+                        f.write(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}\n")
+                except Exception:
+                    pass
+
             api_key = get_api_key()
             headers = {'x-api-key': api_key}
             all_fins = {}
             consecutive_429 = 0
-            for delta in range(30):
+            flog(f'fetch開始 (最大60日)')
+            for delta in range(60):
                 d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
                 try:
+                    time.sleep(1)  # レート制限対策（1秒インターバル）
                     r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                      headers=headers, params={'date': d}, timeout=15)
                     if r.status_code == 429:
                         consecutive_429 += 1
-                        if consecutive_429 >= 3:
-                            break  # 3連続429 → 諦める
-                        continue   # sleepなし（APIを叩かない）
+                        flog(f'429 delta={delta} d={d} (consecutive={consecutive_429})')
+                        if consecutive_429 >= 5:
+                            flog('5連続429 → 中断')
+                            break  # 5連続429 → 諦める
+                        time.sleep(3)  # 429時は3秒待って次へ
+                        continue
                     consecutive_429 = 0
                     if r.ok:
+                        cnt_before = len(all_fins)
                         for row in r.json().get('data', []):
                             code = row.get('Code', '')
                             if code not in all_fins or row.get('DiscDate', '') > all_fins[code].get('DiscDate', ''):
                                 all_fins[code] = row
-                    if len(all_fins) >= 1500:
+                        added = len(all_fins) - cnt_before
+                        if added > 0:
+                            flog(f'd={d} +{added}件 累計={len(all_fins)}')
+                    if len(all_fins) >= 2000:
+                        flog(f'2000件達成 → 完了')
                         break
-                except Exception:
+                except Exception as e:
+                    flog(f'd={d} error={e}')
                     continue
+            flog(f'fetch完了 合計={len(all_fins)}件')
             return all_fins
 
         all_fins = fetch()
@@ -1078,6 +1099,7 @@ def api_debug_errors():
     err_file  = os.path.join(DATA_DIR, 'refresh_errors.txt')
     test_file = os.path.join(CACHE_DIR, '_write_test.txt')
     log_file  = os.path.join(DATA_DIR, 'refresh_log.txt')
+    fins_log  = os.path.join(DATA_DIR, 'fins_build.log')
     cache_files = os.listdir(CACHE_DIR) if os.path.exists(CACHE_DIR) else []
     result = {
         'cache_dir':        CACHE_DIR,
@@ -1092,6 +1114,7 @@ def api_debug_errors():
         'fins_v2_exists':     os.path.exists(os.path.join(CACHE_DIR, 'fins_v2.json')),
         'bulk_lock_exists':   os.path.exists(_BULK_LOCK_FILE),
         'log_tail':           open(log_file).read()[-800:] if os.path.exists(log_file) else 'none',
+        'fins_build_log':     open(fins_log).read()[-1200:] if os.path.exists(fins_log) else 'none',
     }
     return jsonify(result)
 
