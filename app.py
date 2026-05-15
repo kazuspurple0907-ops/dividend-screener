@@ -31,19 +31,25 @@ JQUANTS_V2     = 'https://api.jquants.com/v2'
 _jquants_sem  = threading.Semaphore(2)   # 同時2リクエストまで許可
 _jq_rate_lock = threading.Lock()
 _jq_next_ok   = [0.0]
-_JQ_INTERVAL  = 3.0
+_JQ_INTERVAL  = 3.0    # ポートフォリオ個別取得用（高速）
 _refresh_lock = threading.Lock()
 _refresh_running = [False]
+
+# バルク取得専用レートリミッター（15秒間隔 = ~4リクエスト/分）
+# J-Quants レート制限 ~5コール/60秒 に対して安全マージン付き
+_jq_bulk_rate_lock = threading.Lock()
+_jq_bulk_next_ok   = [0.0]
+_JQ_BULK_INTERVAL  = 15.0
 
 # fins_v2 / master_v2 bulk ビルドのロック（ファイルベース：ワーカー間共有）
 _BULK_LOCK_FILE = os.path.join(DATA_DIR, 'bulk_building.lock')
 
 def _bulk_lock_acquire():
     """ファイルベースのロック取得。成功時True、既にビルド中はFalse"""
-    # 古いロックは5分で期限切れ扱い
+    # 古いロックは1時間で期限切れ扱い（バルク取得は最大30分かかる）
     if os.path.exists(_BULK_LOCK_FILE):
         age = time.time() - os.path.getmtime(_BULK_LOCK_FILE)
-        if age < 300:
+        if age < 3600:
             return False
         try: os.remove(_BULK_LOCK_FILE)
         except Exception: pass
@@ -63,13 +69,25 @@ def _bulk_lock_release():
     except Exception: pass
 
 def _jq_rate_wait():
-    """J-Quants API リクエスト前にレート間隔を保証（グローバル・直列）"""
+    """J-Quants API リクエスト前にレート間隔を保証（ポートフォリオ個別取得用・3秒間隔）"""
     with _jq_rate_lock:
         now  = time.time()
         wait = _jq_next_ok[0] - now
         if wait > 0:
             time.sleep(wait)
         _jq_next_ok[0] = time.time() + _JQ_INTERVAL
+
+def _jq_bulk_rate_wait():
+    """バルク取得専用レートリミッター（15秒間隔 = ~4リクエスト/分）
+    J-Quants レート制限 ~5コール/60秒 に対して安全マージン付き。
+    ポートフォリオ個別取得とは独立したタイマーを使用。
+    """
+    with _jq_bulk_rate_lock:
+        now  = time.time()
+        wait = _jq_bulk_next_ok[0] - now
+        if wait > 0:
+            time.sleep(wait)
+        _jq_bulk_next_ok[0] = time.time() + _JQ_BULK_INTERVAL
 
 # ============================================================
 # スクリーニング条件（固定）
@@ -367,8 +385,8 @@ def get_fins_all():
     """
     fins_v2_file = os.path.join(CACHE_DIR, 'fins_v2.json')
 
-    # キャッシュが新鮮なら即リターン
-    if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 86400:
+    # キャッシュが新鮮なら即リターン（TTL=7日）
+    if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 604800:
         try:
             with open(fins_v2_file) as f:
                 return json.load(f)
@@ -381,7 +399,7 @@ def get_fins_all():
 
     try:
         # ダブルチェック
-        if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 86400:
+        if os.path.exists(fins_v2_file) and (time.time() - os.path.getmtime(fins_v2_file)) < 604800:
             try:
                 with open(fins_v2_file) as f:
                     return json.load(f)
@@ -390,8 +408,8 @@ def get_fins_all():
 
         def fetch():
             # /fins/summary は日付なしでは 400 → 直近60日を日付別取得
-            # 最初に_jq_rate_wait()でmasterビルド後のクールダウンを待ち、
-            # その後は2秒インターバル（~30 req/min, J-Quants制限内）
+            # _jq_bulk_rate_wait() で 15秒間隔（~4リクエスト/分）を保証
+            # ポートフォリオ個別取得の _jq_rate_wait() とは独立したタイマーを使用
             fins_log = os.path.join(DATA_DIR, 'fins_build.log')
             def flog(msg):
                 try:
@@ -404,31 +422,31 @@ def get_fins_all():
             headers = {'x-api-key': api_key}
             all_fins = {}
             consecutive_429 = 0
-            wait_count = 0  # 60秒待機の回数（上限2回）
-            flog(f'fetch開始 (最大60日)')
+            wait_count = 0  # 90秒待機の回数（上限10回）
+            flog(f'fetch開始 (最大60日, 週末スキップ, 15秒間隔)')
             for delta in range(60):
-                d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
+                d_obj = datetime.now() - timedelta(days=delta)
+                # 週末はスキップ（土=5, 日=6 — 決算発表なし）
+                if d_obj.weekday() >= 5:
+                    continue
+                d = d_obj.strftime('%Y-%m-%d')
                 try:
-                    _jq_rate_wait()  # グローバルレート制限（master/fins共通で3秒間隔を保証）
+                    _jq_bulk_rate_wait()  # バルク専用レートリミッター（15秒間隔）
                     r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                      headers=headers, params={'date': d}, timeout=15)
                     if r.status_code == 429:
                         consecutive_429 += 1
                         retry_after = r.headers.get('Retry-After', 'N/A')
                         flog(f'429 delta={delta} d={d} consecutive={consecutive_429} Retry-After={retry_after}')
-                        if consecutive_429 == 3:
+                        if consecutive_429 >= 3:
                             wait_count += 1
-                            if wait_count > 2:
-                                # 3回目の429バースト → 日次クォータ枯渇の可能性。中断
-                                flog(f'3回目の429バースト → APIクォータ枯渇の可能性。中断します。')
+                            if wait_count > 10:
+                                flog(f'429バースト{wait_count}回目 → クォータ枯渇。中断します。')
                                 break
-                            flog(f'3連続429 → 60秒待機 ({wait_count}/2回目)')
-                            time.sleep(60)
+                            flog(f'3連続429 → 90秒待機 ({wait_count}/10回目)')
+                            time.sleep(90)
                             consecutive_429 = 0
                             continue  # 同じdeltaを再試行
-                        if consecutive_429 >= 6:
-                            flog('リセット後も429継続 → 中断')
-                            break
                         continue
                     consecutive_429 = 0
                     if r.ok:
@@ -438,8 +456,7 @@ def get_fins_all():
                             if code not in all_fins or row.get('DiscDate', '') > all_fins[code].get('DiscDate', ''):
                                 all_fins[code] = row
                         added = len(all_fins) - cnt_before
-                        if added > 0:
-                            flog(f'd={d} +{added}件 累計={len(all_fins)}')
+                        flog(f'd={d} +{added}件 累計={len(all_fins)}')
                     if len(all_fins) >= 2000:
                         flog(f'2000件達成 → 完了')
                         break
@@ -1490,15 +1507,15 @@ def api_screen_prefetch():
     """バルク銘柄マスター＋fins を取得してキャッシュ（ファイルロックで重複防止）"""
     fins_v2_file   = os.path.join(CACHE_DIR, 'fins_v2.json')
     master_v2_file = os.path.join(CACHE_DIR, 'master_v2.json')
-    fins_ok   = os.path.exists(fins_v2_file)   and (time.time() - os.path.getmtime(fins_v2_file))   < 86400
+    fins_ok   = os.path.exists(fins_v2_file)   and (time.time() - os.path.getmtime(fins_v2_file))   < 604800
     master_ok = os.path.exists(master_v2_file) and (time.time() - os.path.getmtime(master_v2_file)) < 86400
     if fins_ok and master_ok:
         return jsonify({'ok': True, 'message': 'すでにキャッシュ済みです'})
 
     if os.path.exists(_BULK_LOCK_FILE):
         age = time.time() - os.path.getmtime(_BULK_LOCK_FILE)
-        if age < 300:
-            return jsonify({'ok': True, 'message': 'バックグラウンドで取得中です'})
+        if age < 3600:
+            return jsonify({'ok': True, 'message': 'バックグラウンドで取得中です（最大20分）'})
 
     def do_fetch():
         try:
@@ -1511,7 +1528,7 @@ def api_screen_prefetch():
             pass
     t = threading.Thread(target=do_fetch, daemon=True)
     t.start()
-    return jsonify({'ok': True, 'message': 'バックグラウンドで取得開始しました（約10〜30秒）'})
+    return jsonify({'ok': True, 'message': 'バックグラウンドで取得開始しました（初回は10〜20分かかります）'})
 
 @app.route('/api/recommendations')
 def api_recommendations():
