@@ -394,31 +394,18 @@ def get_fins_all():
                 pass
 
         def fetch():
-            # 1. ページネーション一括取得
-            try:
-                rows = jq_get_bulk('/fins/summary')
-                if len(rows) >= 100:
-                    latest = {}
-                    for row in rows:
-                        code = row.get('Code', '')
-                        if code not in latest or row.get('DiscDate', '') > latest[code].get('DiscDate', ''):
-                            latest[code] = row
-                    return latest
-            except Exception:
-                pass
-
-            # 2. フォールバック: 直近30日を日付別取得
+            # /fins/summary は日付・コードなしでは 400 が返るのでスキップ
+            # 直近30日を日付別に取得（_jq_rate_wait なし：日付指定はレート緩め）
             api_key = get_api_key()
             headers = {'x-api-key': api_key}
             all_fins = {}
             for delta in range(30):
                 d = (datetime.now() - timedelta(days=delta)).strftime('%Y-%m-%d')
                 try:
-                    _jq_rate_wait()
                     r = requests.get(f'{JQUANTS_V2}/fins/summary',
                                      headers=headers, params={'date': d}, timeout=15)
                     if r.status_code == 429:
-                        time.sleep(5)
+                        time.sleep(3)
                         continue
                     if r.ok:
                         for row in r.json().get('data', []):
