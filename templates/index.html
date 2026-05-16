@@ -185,8 +185,30 @@
   /* SBI注文ボタン */
   .btn-sbi-sell { background: rgba(231,76,60,.15); color: var(--ng); border: 1px solid rgba(231,76,60,.35); font-size: 12px; padding: 5px 12px; text-decoration: none; }
   .btn-sbi-sell:hover { background: rgba(231,76,60,.28); }
-  .btn-sbi-buy  { background: rgba(62,207,142,.15); color: var(--ok); border: 1px solid rgba(62,207,142,.35); font-size: 12px; padding: 5px 12px; text-decoration: none; }
+  .btn-sbi-buy  { background: rgba(62,207,142,.15); color: var(--ok); border: 1px solid rgba(62,207,142,.35); font-size: 13px; padding: 10px 16px; min-height: 44px; text-decoration: none; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 500; transition: all .15s; }
   .btn-sbi-buy:hover  { background: rgba(62,207,142,.28); }
+  .btn-sbi-sell { background: rgba(231,76,60,.15); color: var(--ng); border: 1px solid rgba(231,76,60,.35); font-size: 13px; padding: 10px 16px; min-height: 44px; text-decoration: none; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 500; transition: all .15s; }
+  .btn-sbi-sell:hover { background: rgba(231,76,60,.28); }
+
+  /* 注文確認モーダル */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 200; display: flex; align-items: center; justify-content: center; }
+  .modal-overlay.hidden { display: none; }
+  .modal-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 420px; max-width: 92vw; max-height: 90vh; overflow-y: auto; }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+  .modal-title { font-size: 16px; font-weight: 700; }
+  .modal-close { background: none; border: none; color: var(--text2); font-size: 20px; cursor: pointer; padding: 4px 8px; line-height: 1; }
+  .modal-close:hover { color: var(--text); }
+  .modal-row { display: flex; justify-content: space-between; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; gap: 12px; }
+  .modal-row:last-of-type { border-bottom: none; }
+  .modal-label { color: var(--text2); white-space: nowrap; }
+  .modal-value { font-weight: 600; text-align: right; }
+  .modal-note { font-size: 11px; color: var(--text3); margin: 14px 0 0; line-height: 1.6; border-top: 1px solid var(--border); padding-top: 12px; }
+  .modal-footer { display: flex; gap: 10px; margin-top: 20px; }
+  .modal-footer .btn { flex: 1; justify-content: center; padding: 12px; font-size: 14px; }
+  .modal-sbi-sell { background: rgba(231,76,60,.2); color: var(--ng); border: 1px solid rgba(231,76,60,.4); }
+  .modal-sbi-sell:hover { background: rgba(231,76,60,.35); }
+  .modal-sbi-buy  { background: rgba(62,207,142,.2); color: var(--ok); border: 1px solid rgba(62,207,142,.4); }
+  .modal-sbi-buy:hover  { background: rgba(62,207,142,.35); }
 
   /* ==================== スマホ対応 ==================== */
   @media (max-width: 640px) {
@@ -208,6 +230,12 @@
     td, th { font-size: 12px; padding: 7px 6px; }
     .score-bg { min-width: 40px; }
     #add-stock-form .form-row { flex-direction: column; }
+    /* モーダル：ボトムシート形式 */
+    .modal-overlay { align-items: flex-end; }
+    .modal-box { width: 100%; max-width: 100%; border-radius: 16px 16px 0 0; padding: 20px 16px 32px; }
+    .modal-footer .btn { padding: 14px; font-size: 15px; }
+    /* SBIボタン：モバイルでフル幅 */
+    .btn-sbi-sell, .btn-sbi-buy { width: 100%; justify-content: center; }
   }
 </style>
 </head>
@@ -232,6 +260,22 @@
 </div>
 
 <div id="toast"></div>
+
+<!-- ===================== 注文確認モーダル ===================== -->
+<div id="order-modal" class="modal-overlay hidden" onclick="closeOrderModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div id="modal-title" class="modal-title"></div>
+      <button class="modal-close" onclick="closeOrderModal()">✕</button>
+    </div>
+    <div id="modal-body"></div>
+    <div class="modal-note" id="modal-note"></div>
+    <div class="modal-footer">
+      <a id="modal-sbi-btn" class="btn" href="#" target="_blank" onclick="closeOrderModal()"></a>
+      <button class="btn btn-secondary" onclick="closeOrderModal()">キャンセル</button>
+    </div>
+  </div>
+</div>
 
 <!-- ===================== ポートフォリオ ===================== -->
 <div id="tab-portfolio" class="tab-content active">
@@ -945,6 +989,67 @@ function renderScreenTable(results) {
 }
 
 // ============================================================
+// 注文確認モーダル
+// ============================================================
+function openOrderModal(order) {
+  const modal  = document.getElementById('order-modal');
+  const title  = document.getElementById('modal-title');
+  const body   = document.getElementById('modal-body');
+  const note   = document.getElementById('modal-note');
+  const sbiBtn = document.getElementById('modal-sbi-btn');
+
+  if (order.side === 'sell') {
+    title.innerHTML = '🔴 売り注文確認';
+    const sellAmt = (order.shares && order.currentPrice)
+      ? order.shares * order.currentPrice
+      : (order.sellAmount || 0);
+    body.innerHTML = `
+      <div class="modal-row"><span class="modal-label">銘柄</span><span class="modal-value">${order.code} ${order.name}</span></div>
+      <div class="modal-row"><span class="modal-label">保有株数</span><span class="modal-value">${fmt(order.shares)} 株</span></div>
+      <div class="modal-row"><span class="modal-label">現在株価</span><span class="modal-value">${fmt(order.currentPrice)} 円</span></div>
+      <div class="modal-row"><span class="modal-label">推定売却額</span><span class="modal-value" style="color:var(--ng)">${fmtYen(sellAmt)} 円</span></div>
+    `;
+    sbiBtn.textContent = '🔴 SBIで売り注文';
+    sbiBtn.className   = 'btn modal-sbi-sell';
+    sbiBtn.href        = sbiUrl(order.code, 'sell');
+  } else {
+    title.innerHTML = '🟢 買い注文確認';
+    const divChange = order.divChange || 0;
+    const divColor  = divChange >= 0 ? 'var(--ok)' : 'var(--ng)';
+    const divSign   = divChange >= 0 ? '+' : '';
+    body.innerHTML = `
+      <div class="modal-row"><span class="modal-label">銘柄</span><span class="modal-value">${order.code} ${order.name}</span></div>
+      <div class="modal-row"><span class="modal-label">推奨購入株数</span><span class="modal-value">${fmt(order.estShares)} 株（売却額から試算）</span></div>
+      <div class="modal-row"><span class="modal-label">現在株価</span><span class="modal-value">${fmt(order.currentPrice)} 円</span></div>
+      <div class="modal-row"><span class="modal-label">推定購入額</span><span class="modal-value" style="color:var(--ok)">${fmtYen(order.estAmount)} 円</span></div>
+      <div class="modal-row">
+        <span class="modal-label">年間配当（税後）変化</span>
+        <span class="modal-value">
+          <span style="color:${divColor}">${divSign}${fmtYen(divChange)} 円 (${divSign}${order.divChangePct}%)</span><br>
+          <span style="font-size:11px;color:var(--text3)">${fmtYen(order.curAnnualDiv)} → ${fmtYen(order.newAnnualDiv)} 円/年</span>
+        </span>
+      </div>
+    `;
+    sbiBtn.textContent = '🟢 SBIで買い注文';
+    sbiBtn.className   = 'btn modal-sbi-buy';
+    sbiBtn.href        = sbiUrl(order.code, 'buy');
+  }
+
+  note.textContent = 'SBIにログイン済みの場合、注文フォームに銘柄が自動選択されます。注文種別・数量はSBI側で入力してください。';
+  modal.classList.remove('hidden');
+  document.addEventListener('keydown', _modalEscHandler);
+}
+
+function closeOrderModal() {
+  document.getElementById('order-modal').classList.add('hidden');
+  document.removeEventListener('keydown', _modalEscHandler);
+}
+
+function _modalEscHandler(e) {
+  if (e.key === 'Escape') closeOrderModal();
+}
+
+// ============================================================
 // 入替推奨
 // ============================================================
 async function loadRecommendations() {
@@ -977,6 +1082,13 @@ function renderRecommendations(recs) {
     const gainPct = rec.gain_pct || 0;
     const yac     = rec.yield_at_cost || 0;
 
+    // 売りボタン用JSONデータ
+    const sellOrder = JSON.stringify({
+      side: 'sell', code: cur.code, name: cur.name || '',
+      shares: cur.shares || 0, currentPrice: cur.current_price || 0,
+      sellAmount: rec.sell_amount || 0
+    }).replace(/'/g, '&apos;');
+
     // 同業種に候補なし
     if (rec.no_same_sector) {
       return `
@@ -991,7 +1103,7 @@ function renderRecommendations(recs) {
               ${cur.sector || 'セクター不明'}
             </div>
             <div style="margin-top:8px">
-              <a class="btn btn-sbi-sell" href="${sbiUrl(cur.code, 'sell')}" target="_blank">🔴 SBIで売り注文</a>
+              <button class="btn btn-sbi-sell" onclick='openOrderModal(${sellOrder})'>🔴 売り注文確認</button>
             </div>
           </div>
           <div class="rec-arrow" style="color:var(--text3)">→</div>
@@ -1008,6 +1120,14 @@ function renderRecommendations(recs) {
       const divChangePct = c.div_change_pct || 0;
       const divColor = divChange >= 0 ? 'var(--ok)' : 'var(--ng)';
       const divSign  = divChange >= 0 ? '+' : '';
+      // 買いボタン用JSONデータ
+      const buyOrder = JSON.stringify({
+        side: 'buy', code: c.code, name: c.name || '',
+        estShares: c.est_shares || 0, currentPrice: c.current_price || 0,
+        estAmount: rec.sell_amount || 0,
+        divChange: c.div_change || 0, divChangePct: c.div_change_pct || 0,
+        curAnnualDiv: curDiv, newAnnualDiv: c.est_annual_div || 0
+      }).replace(/'/g, '&apos;');
       return `
       <div class="rec-candidate">
         <div class="rec-cand-code">${c.code} ${c.name || ''}</div>
@@ -1027,7 +1147,7 @@ function renderRecommendations(recs) {
           ${c.sector || ''} / ${c.market_cap_oku ? c.market_cap_oku + '億円' : '—'}
         </div>
         <div style="margin-top:10px">
-          <a class="btn btn-sbi-buy" href="${sbiUrl(c.code, 'buy')}" target="_blank">🟢 SBIで買い注文</a>
+          <button class="btn btn-sbi-buy" onclick='openOrderModal(${buyOrder})'>🟢 買い注文確認</button>
         </div>
       </div>`;
     }).join('');
@@ -1049,7 +1169,7 @@ function renderRecommendations(recs) {
               取得利回り: ${yac}%
             </div>
             <div style="margin-top:8px">
-              <a class="btn btn-sbi-sell" href="${sbiUrl(cur.code, 'sell')}" target="_blank">🔴 SBIで売り注文</a>
+              <button class="btn btn-sbi-sell" onclick='openOrderModal(${sellOrder})'>🔴 売り注文確認</button>
             </div>
           </div>
           <div class="rec-arrow">→</div>
