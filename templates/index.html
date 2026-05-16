@@ -181,6 +181,34 @@
   .rec-cand-code  { font-weight: 700; color: var(--ok); }
   .rec-cand-meta  { font-size: 11px; color: var(--text2); margin-top: 2px; }
   .rec-gain { font-size: 11px; background: rgba(62,207,142,.1); color: var(--ok); border-radius: 4px; padding: 2px 7px; white-space: nowrap; }
+
+  /* SBI注文ボタン */
+  .btn-sbi-sell { background: rgba(231,76,60,.15); color: var(--ng); border: 1px solid rgba(231,76,60,.35); font-size: 12px; padding: 5px 12px; text-decoration: none; }
+  .btn-sbi-sell:hover { background: rgba(231,76,60,.28); }
+  .btn-sbi-buy  { background: rgba(62,207,142,.15); color: var(--ok); border: 1px solid rgba(62,207,142,.35); font-size: 12px; padding: 5px 12px; text-decoration: none; }
+  .btn-sbi-buy:hover  { background: rgba(62,207,142,.28); }
+
+  /* ==================== スマホ対応 ==================== */
+  @media (max-width: 640px) {
+    header { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 6px; }
+    header h1 { order: 1; }
+    .tabs { order: 3; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; width: 100%; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .header-right { order: 2; margin-left: auto; }
+    .tab-content { padding: 12px 10px; }
+    .card { padding: 12px; }
+    .summary-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .summary-item { padding: 10px 12px; }
+    .summary-value { font-size: 16px; }
+    .form-row { flex-direction: column; gap: 8px; }
+    .form-row input, .form-row select { width: 100% !important; }
+    .settings-form { max-width: 100% !important; }
+    .rec-candidates { flex-direction: column; }
+    .rec-candidate { min-width: unset; width: 100%; }
+    td, th { font-size: 12px; padding: 7px 6px; }
+    .score-bg { min-width: 40px; }
+    #add-stock-form .form-row { flex-direction: column; }
+  }
 </style>
 </head>
 <body>
@@ -962,6 +990,9 @@ function renderRecommendations(recs) {
               <span class="badge badge-${cur.verdict_class || 'watch'}">${cur.verdict || '—'}</span> &nbsp;
               ${cur.sector || 'セクター不明'}
             </div>
+            <div style="margin-top:8px">
+              <a class="btn btn-sbi-sell" href="${sbiUrl(cur.code, 'sell')}" target="_blank">🔴 SBIで売り注文</a>
+            </div>
           </div>
           <div class="rec-arrow" style="color:var(--text3)">→</div>
           <span style="color:var(--text3);font-size:12px;white-space:nowrap">入替候補なし</span>
@@ -995,6 +1026,9 @@ function renderRecommendations(recs) {
         <div class="rec-cand-meta" style="margin-top:2px">
           ${c.sector || ''} / ${c.market_cap_oku ? c.market_cap_oku + '億円' : '—'}
         </div>
+        <div style="margin-top:10px">
+          <a class="btn btn-sbi-buy" href="${sbiUrl(c.code, 'buy')}" target="_blank">🟢 SBIで買い注文</a>
+        </div>
       </div>`;
     }).join('');
 
@@ -1013,6 +1047,9 @@ function renderRecommendations(recs) {
               取得単価: ${fmt(cur.avg_price)}円 / 現在値: ${fmt(cur.current_price)}円 /
               含み益: <span style="color:${gainPct >= 0 ? 'var(--ok)' : 'var(--ng)'}">${gainPct >= 0 ? '+' : ''}${gainPct}%</span> /
               取得利回り: ${yac}%
+            </div>
+            <div style="margin-top:8px">
+              <a class="btn btn-sbi-sell" href="${sbiUrl(cur.code, 'sell')}" target="_blank">🔴 SBIで売り注文</a>
             </div>
           </div>
           <div class="rec-arrow">→</div>
@@ -1149,6 +1186,13 @@ async function clearCache() {
 function fmt(v) { return v != null ? Number(v).toLocaleString('ja-JP') : '—'; }
 function fmtYen(v) { return v != null ? Math.round(v).toLocaleString('ja-JP') : '—'; }
 function icon(type) { return type === 'ok' ? '✅' : (type === 'warn' ? '⚠️' : '❌'); }
+
+// SBI証券の注文画面URL生成（code4 → code5でin_inv_sec_codeに渡す）
+function sbiUrl(code4, side) {
+  const code5 = code4 + '0';
+  const tradeKbn = side === 'sell' ? 'selling' : 'buying';
+  return `https://site3.sbisec.co.jp/ETGate/?_ControlID=WPLETsmR001Control&_PageID=WPLETsmR001Sdtl20&_ActionID=direct2&trade_kbn=${tradeKbn}&in_inv_sec_code=${code5}`;
+}
 
 function condsBadge(met, total) {
   if (met == null || !total) return '—';
