@@ -11,6 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="配当株">
 <link rel="apple-touch-icon" href="/static/icon-192.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
 <style>
   :root {
     --bg: #0f1117; --bg2: #1a1d27; --bg3: #252836;
@@ -210,7 +211,7 @@
   .modal-sbi-buy  { background: rgba(62,207,142,.2); color: var(--ok); border: 1px solid rgba(62,207,142,.4); }
   .modal-sbi-buy:hover  { background: rgba(62,207,142,.35); }
 
-  /* ==================== スマホ対応 ==================== */
+  /* ==================== スマホ対応（PC レスポンシブ） ==================== */
   @media (max-width: 640px) {
     header { flex-wrap: wrap; height: auto; padding: 8px 12px; gap: 6px; }
     header h1 { order: 1; }
@@ -237,6 +238,91 @@
     /* SBIボタン：モバイルでフル幅 */
     .btn-sbi-sell, .btn-sbi-buy { width: 100%; justify-content: center; }
   }
+
+  /* ==================== モバイル専用 UI ==================== */
+  #mobile-app { display: none; }
+
+  @media (max-width: 640px) {
+    header, #jq-banner, .tab-content { display: none !important; }
+    #toast { bottom: 80px !important; right: 16px !important; left: 16px !important; text-align: center; }
+    #mobile-app { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+  }
+
+  /* スクリーン */
+  .m-screen { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  .m-screen.active { display: flex; }
+  .m-topbar { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 0 16px; height: 52px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .m-topbar > span { font-size: 16px; font-weight: 700; }
+  .m-body { flex: 1; overflow-y: auto; padding: 14px 16px 20px; -webkit-overflow-scrolling: touch; }
+  .m-run-btn { background: var(--accent); color: #fff; border: none; border-radius: 20px; padding: 8px 18px; font-size: 13px; cursor: pointer; font-weight: 600; }
+  .m-run-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* サマリーグリッド */
+  .m-sum-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+  .m-sum-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .m-sum-label { font-size: 10px; color: var(--text2); margin-bottom: 4px; }
+  .m-sum-value { font-size: 18px; font-weight: 700; line-height: 1.2; }
+  .m-sum-sub { font-size: 10px; color: var(--text2); margin-top: 2px; }
+
+  /* セクションヘッダー */
+  .m-sec-hdr { font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .5px; margin: 4px 0 10px; }
+
+  /* 保有銘柄カード */
+  .m-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 10px; cursor: pointer; transition: border-color .15s; }
+  .m-card:active { border-color: var(--accent); }
+  .m-card-head { display: flex; justify-content: space-between; align-items: flex-start; }
+  .m-card-code { font-weight: 700; font-size: 16px; }
+  .m-card-sector { font-size: 11px; color: var(--text3); margin-top: 2px; }
+  .m-card-yield { font-size: 20px; font-weight: 700; color: var(--accent); text-align: right; }
+  .m-card-metrics { display: flex; gap: 8px; margin-top: 10px; }
+  .m-card-metric { flex: 1; }
+  .m-card-metric-label { font-size: 10px; color: var(--text3); margin-bottom: 2px; }
+  .m-card-metric-val { font-size: 13px; font-weight: 600; }
+  .m-detail { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+  .m-detail-row { display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; }
+  .m-detail-label { color: var(--text2); }
+  .m-detail-val { font-weight: 500; text-align: right; }
+
+  /* 追加ボタン・フォーム */
+  .m-add-btn { width: 100%; background: var(--bg3); border: 1px dashed var(--border); border-radius: 12px; padding: 14px; color: var(--text2); font-size: 14px; cursor: pointer; margin-bottom: 12px; display: block; }
+  .m-add-form { background: var(--bg3); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; display: none; }
+  .m-add-form.open { display: block; }
+  .m-add-form label { font-size: 12px; color: var(--text2); margin-bottom: 4px; display: block; margin-top: 10px; }
+  .m-add-form label:first-child { margin-top: 0; }
+  .m-add-form input { width: 100%; background: var(--bg2); border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 8px; font-size: 15px; }
+  .m-add-form-btns { display: flex; gap: 8px; margin-top: 14px; }
+  .m-add-form-btns button { flex: 1; padding: 13px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+
+  /* 入替推奨スワップカード */
+  .m-swap-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 14px; }
+  .m-sell-zone { background: rgba(231,76,60,.06); border-bottom: 1px solid var(--border); padding: 14px; }
+  .m-buy-zone-hdr { padding: 8px 14px 4px; font-size: 11px; color: var(--text2); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .m-swap-code { font-weight: 700; font-size: 15px; }
+  .m-swap-meta { font-size: 12px; color: var(--text2); margin-top: 3px; }
+  .m-swap-divchg { font-size: 12px; margin-top: 8px; padding: 7px 10px; background: rgba(0,0,0,.2); border-radius: 6px; line-height: 1.6; }
+  .m-order-btn { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 13px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; margin-top: 10px; }
+  .m-order-sell { background: rgba(231,76,60,.18); color: var(--ng); }
+  .m-order-buy  { background: rgba(62,207,142,.18); color: var(--ok); }
+
+  /* スクリーニング結果カード */
+  .m-result-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
+  .m-result-code { font-weight: 700; font-size: 14px; }
+  .m-result-metrics { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .m-result-badge { font-size: 11px; background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 2px 7px; color: var(--text2); }
+
+  /* ボトムナビ */
+  .m-nav { background: var(--bg2); border-top: 1px solid var(--border); display: flex; flex-shrink: 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .m-nav-btn { flex: 1; background: none; border: none; color: var(--text3); padding: 10px 0 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 10px; font-weight: 500; transition: color .15s; }
+  .m-nav-btn i { font-size: 24px; }
+  .m-nav-btn.active { color: var(--accent); }
+
+  /* 設定モバイル */
+  .m-settings-section { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .m-settings-title { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--text2); }
+  .m-settings-section label { font-size: 12px; color: var(--text2); margin-bottom: 6px; display: block; }
+  .m-settings-section input { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 11px 12px; border-radius: 8px; font-size: 15px; font-family: monospace; }
+  .m-settings-btn { width: 100%; padding: 13px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 10px; display: block; }
+  .m-settings-note { font-size: 12px; color: var(--text2); line-height: 1.6; margin-top: 10px; }
 </style>
 </head>
 <body>
@@ -501,6 +587,91 @@
   </div>
 </div>
 
+<!-- ===================== モバイル UI ===================== -->
+<div id="mobile-app">
+
+  <!-- ホーム（ポートフォリオ） -->
+  <div class="m-screen active" id="m-home">
+    <div class="m-topbar">
+      <span>📈 ポートフォリオ</span>
+      <div id="m-api-status" class="status-badge warn">未接続</div>
+    </div>
+    <div class="m-body" id="m-home-body">
+      <div id="m-sum-grid" class="m-sum-grid"></div>
+      <div id="m-pf-list"></div>
+    </div>
+  </div>
+
+  <!-- 入替推奨 -->
+  <div class="m-screen" id="m-rec">
+    <div class="m-topbar">
+      <span>💡 入替推奨</span>
+      <button class="m-run-btn" id="m-rec-btn" onclick="mRunRec()">分析実行</button>
+    </div>
+    <div class="m-body" id="m-rec-body">
+      <div class="empty" style="padding-top:60px"><div class="empty-icon">💡</div>「分析実行」を押してください</div>
+    </div>
+  </div>
+
+  <!-- スクリーニング -->
+  <div class="m-screen" id="m-screen-view">
+    <div class="m-topbar">
+      <span>🔍 スクリーニング</span>
+      <button class="m-run-btn" id="m-screen-btn" onclick="runScreen()">実行</button>
+    </div>
+    <div class="m-body">
+      <div id="m-screen-count" style="font-size:12px;color:var(--text2);margin-bottom:10px;"></div>
+      <div id="m-screen-list">
+        <div class="empty" style="padding-top:40px"><div class="empty-icon">🔍</div>「実行」を押してください</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 設定 -->
+  <div class="m-screen" id="m-settings">
+    <div class="m-topbar"><span>⚙️ 設定</span></div>
+    <div class="m-body">
+      <div class="m-settings-section">
+        <div class="m-settings-title">J-Quants API設定</div>
+        <label>APIキー</label>
+        <input type="password" id="m-cfg-apikey" placeholder="APIキーを貼り付け">
+        <div id="m-cfg-hint" style="font-size:11px;color:var(--text2);margin-top:4px;"></div>
+        <button class="m-settings-btn" style="background:var(--accent);color:#fff;border:none;" onclick="mSaveConfig()">保存</button>
+        <button class="m-settings-btn" style="background:var(--bg3);color:var(--text);border:1px solid var(--border);margin-top:8px;" onclick="testConnection()">接続テスト</button>
+        <div class="m-settings-note">
+          ① jpx-jquants.com でログイン → APIキーをコピー<br>
+          ② 上に貼り付けて「保存」→「接続テスト」で確認
+        </div>
+      </div>
+      <div class="m-settings-section">
+        <div class="m-settings-title">データ管理</div>
+        <button class="m-settings-btn" style="background:rgba(231,76,60,.15);color:var(--ng);border:1px solid rgba(231,76,60,.3);" onclick="clearCache()">キャッシュクリア</button>
+        <div class="m-settings-note">財務データのキャッシュを削除します（次回更新時に再取得）</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ボトムナビ -->
+  <nav class="m-nav">
+    <button class="m-nav-btn active" onclick="switchMTab('home',this)">
+      <i class="ti ti-briefcase"></i>
+      <span>保有</span>
+    </button>
+    <button class="m-nav-btn" onclick="switchMTab('rec',this)">
+      <i class="ti ti-arrows-exchange"></i>
+      <span>入替</span>
+    </button>
+    <button class="m-nav-btn" onclick="switchMTab('screen',this)">
+      <i class="ti ti-filter"></i>
+      <span>スクリーン</span>
+    </button>
+    <button class="m-nav-btn" onclick="switchMTab('settings',this)">
+      <i class="ti ti-settings"></i>
+      <span>設定</span>
+    </button>
+  </nav>
+</div>
+
 <script>
 // ============================================================
 // タブ制御
@@ -585,6 +756,9 @@ function setApiStatus(ok) {
   const el = document.getElementById('api-status');
   el.textContent = ok ? '接続済み' : '未接続';
   el.className   = 'status-badge ' + (ok ? 'ok' : 'warn');
+  // モバイル
+  const mel = document.getElementById('m-api-status');
+  if (mel) { mel.textContent = ok ? '接続済み' : '未接続'; mel.className = 'status-badge ' + (ok ? 'ok' : 'warn'); }
 }
 
 // ============================================================
@@ -871,6 +1045,7 @@ function renderPortfolioTable(metrics) {
         </td>
       </tr>`;
   }).join('');
+  renderMobilePortfolio(metrics);
 }
 
 function renderConditionsDetail(conds) {
@@ -986,6 +1161,7 @@ function renderScreenTable(results) {
       <td><span class="badge badge-${m.verdict_class}">${m.verdict}</span></td>
     </tr>`;
   }).join('');
+  renderMobileScreenResults(results);
 }
 
 // ============================================================
@@ -1179,6 +1355,7 @@ function renderRecommendations(recs) {
         <div class="rec-candidates">${candHtml}</div>
       </div>`;
   }).join('');
+  renderMobileRecommendations(recs);
 }
 
 // ============================================================
@@ -1319,6 +1496,310 @@ function condsBadge(met, total) {
   const color = (met === total) ? 'var(--ok)' : (met >= total * 0.75 ? 'var(--warn)' : 'var(--ng)');
   const suffix = (met === total) ? ' ✅' : '';
   return `<span style="font-weight:700;color:${color}">${met}/${total}${suffix}</span>`;
+}
+
+// ============================================================
+// モバイル UI 関数
+// ============================================================
+function switchMTab(tab, btn) {
+  const screens = { home: 'm-home', rec: 'm-rec', screen: 'm-screen-view', settings: 'm-settings' };
+  Object.values(screens).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('active');
+  });
+  const el = document.getElementById(screens[tab]);
+  if (el) el.classList.add('active');
+  document.querySelectorAll('.m-nav-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+function renderMobilePortfolio(metrics) {
+  if (!metrics || !metrics.length) {
+    document.getElementById('m-sum-grid').innerHTML = '';
+    document.getElementById('m-pf-list').innerHTML =
+      `<button class="m-add-btn" onclick="toggleMAddForm()">＋ 銘柄を追加</button>
+       <div id="m-add-form" class="m-add-form">${mAddFormHtml()}</div>`;
+    return;
+  }
+
+  // サマリー計算
+  const valid    = metrics.filter(m => !m.error);
+  const totalVal = valid.reduce((s, m) => s + (m.current_price || 0) * (m.shares || 0), 0);
+  const totalCst = valid.reduce((s, m) => s + (m.avg_price || 0) * (m.shares || 0), 0);
+  const totalPnl = totalVal - totalCst;
+  const totalDiv = valid.reduce((s, m) => s + (m.annual_dividend || 0), 0);
+  const avgYield = valid.length ? valid.reduce((s, m) => s + (m.dividend_yield || 0), 0) / valid.length : 0;
+  const pCls     = totalPnl >= 0 ? 'pos' : 'neg';
+  const pSign    = totalPnl >= 0 ? '+' : '';
+
+  document.getElementById('m-sum-grid').innerHTML = `
+    <div class="m-sum-card">
+      <div class="m-sum-label">評価額合計</div>
+      <div class="m-sum-value">${fmtYen(totalVal)}<span style="font-size:11px;color:var(--text2)"> 円</span></div>
+    </div>
+    <div class="m-sum-card">
+      <div class="m-sum-label">含み損益</div>
+      <div class="m-sum-value ${pCls}">${pSign}${fmtYen(totalPnl)}<span style="font-size:11px"> 円</span></div>
+      <div class="m-sum-sub">${totalCst ? (totalPnl / totalCst * 100).toFixed(1) + '%' : ''}</div>
+    </div>
+    <div class="m-sum-card">
+      <div class="m-sum-label">年間配当（税後）</div>
+      <div class="m-sum-value">${fmtYen(totalDiv)}<span style="font-size:11px;color:var(--text2)"> 円</span></div>
+    </div>
+    <div class="m-sum-card">
+      <div class="m-sum-label">平均利回り</div>
+      <div class="m-sum-value">${avgYield.toFixed(2)}<span style="font-size:11px;color:var(--text2)"> %</span></div>
+    </div>`;
+
+  const cardsHtml = metrics.map(m => {
+    if (m.error) return `
+      <div class="m-card" style="border-color:rgba(231,76,60,.3)">
+        <div style="font-weight:700">${m.code}</div>
+        <div style="color:var(--ng);font-size:12px;margin-top:4px">${m.error}</div>
+        <button class="m-order-btn" style="background:rgba(231,76,60,.1);color:var(--ng);margin-top:8px" onclick="event.stopPropagation();removeStock('${m.code}')">削除</button>
+      </div>`;
+    const pnl      = m.unrealized_pnl ?? null;
+    const pnlPct   = m.unrealized_pnl_pct ?? null;
+    const pCls2    = (pnl ?? 0) >= 0 ? 'pos' : 'neg';
+    const pnlStr   = pnl != null ? `<span class="${pCls2}">${pnl >= 0 ? '+' : ''}${fmtYen(pnl)}円</span>` : '—';
+    const pnlPctStr = pnlPct != null ? `<span style="font-size:10px;color:var(--text3)">${pnlPct >= 0 ? '+' : ''}${pnlPct}%</span>` : '';
+    const vCls     = m.verdict_class || 'watch';
+    const condColor = m.conditions_met === m.conditions_total ? 'var(--ok)' : (m.conditions_met >= (m.conditions_total || 8) * 0.75 ? 'var(--warn)' : 'var(--ng)');
+    const tIcon    = m.dividend_trend === 'increasing' ? '↑' : (m.dividend_trend === 'decreasing' ? '↓' : '');
+    const tCls     = m.dividend_trend === 'increasing' ? 'pos' : (m.dividend_trend === 'decreasing' ? 'neg' : '');
+    return `
+      <div class="m-card" onclick="toggleMDetail('${m.code}')">
+        <div class="m-card-head">
+          <div>
+            <div class="m-card-code">${m.code} <span style="font-weight:400;font-size:13px;color:var(--text2)">${m.name || ''}</span></div>
+            <div class="m-card-sector">${m.sector || ''}</div>
+          </div>
+          <div>
+            <div class="m-card-yield">${fmt(m.dividend_yield)}%</div>
+            <div style="font-size:10px;color:var(--text2);text-align:right">利回り</div>
+          </div>
+        </div>
+        <div class="m-card-metrics">
+          <div class="m-card-metric">
+            <div class="m-card-metric-label">現在値</div>
+            <div class="m-card-metric-val">${fmt(m.current_price)}円</div>
+          </div>
+          <div class="m-card-metric">
+            <div class="m-card-metric-label">含み損益</div>
+            <div class="m-card-metric-val">${pnlStr} ${pnlPctStr}</div>
+          </div>
+          <div class="m-card-metric">
+            <div class="m-card-metric-label">条件</div>
+            <div class="m-card-metric-val" style="color:${condColor}">${m.conditions_met ?? '—'}/${m.conditions_total ?? '—'}</div>
+          </div>
+          <div class="m-card-metric" style="flex:none;text-align:right">
+            <span class="badge badge-${vCls}">${m.verdict || '—'}</span>
+          </div>
+        </div>
+        <div id="m-detail-${m.code}" class="m-detail" style="display:none">
+          <div class="m-detail-row"><span class="m-detail-label">DPS</span><span class="m-detail-val">${fmt(m.dps)}円 <span class="${tCls}">${tIcon}</span></span></div>
+          <div class="m-detail-row"><span class="m-detail-label">PER / PBR</span><span class="m-detail-val">${m.per ?? '—'}倍 / ${m.pbr ?? '—'}倍</span></div>
+          <div class="m-detail-row"><span class="m-detail-label">ROE</span><span class="m-detail-val">${m.roe ?? '—'}%</span></div>
+          <div class="m-detail-row"><span class="m-detail-label">自己資本比率</span><span class="m-detail-val">${m.equity_ratio ?? '—'}%</span></div>
+          <div class="m-detail-row"><span class="m-detail-label">配当性向</span><span class="m-detail-val">${m.payout_ratio ?? '—'}%</span></div>
+          <div class="m-detail-row"><span class="m-detail-label">年間配当（税後）</span><span class="m-detail-val">${m.annual_dividend ? fmtYen(m.annual_dividend) + '円' : '—'}</span></div>
+          <div class="m-detail-row"><span class="m-detail-label">時価総額</span><span class="m-detail-val">${m.market_cap_oku ? m.market_cap_oku + '億円' : '—'}</span></div>
+          <button class="m-order-btn" style="background:rgba(231,76,60,.1);color:var(--ng);margin-top:6px"
+            onclick="event.stopPropagation();removeStock('${m.code}')">この銘柄を削除</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('m-pf-list').innerHTML =
+    `<button class="m-add-btn" onclick="toggleMAddForm()">＋ 銘柄を追加</button>
+     <div id="m-add-form" class="m-add-form">${mAddFormHtml()}</div>
+     <div class="m-sec-hdr">保有銘柄 ${metrics.length}件</div>
+     ${cardsHtml}`;
+}
+
+function mAddFormHtml() {
+  return `
+    <label>証券コード（4桁）</label>
+    <input type="text" id="m-in-code" placeholder="8316" maxlength="4" inputmode="numeric">
+    <label>銘柄名（任意）</label>
+    <input type="text" id="m-in-name" placeholder="三井住友FG">
+    <label>保有株数</label>
+    <input type="number" id="m-in-shares" placeholder="100" inputmode="numeric">
+    <label>平均取得単価（円）</label>
+    <input type="number" id="m-in-avg" placeholder="7500" inputmode="numeric">
+    <div class="m-add-form-btns">
+      <button style="background:var(--accent);color:#fff;border:none;" onclick="mAddStock()">追加</button>
+      <button style="background:var(--bg3);color:var(--text);border:1px solid var(--border);" onclick="toggleMAddForm()">キャンセル</button>
+    </div>`;
+}
+
+function toggleMDetail(code) {
+  const el = document.getElementById('m-detail-' + code);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+function toggleMAddForm() {
+  const form = document.getElementById('m-add-form');
+  if (form) form.classList.toggle('open');
+}
+
+async function mAddStock() {
+  const code   = (document.getElementById('m-in-code')?.value || '').trim();
+  const name   = (document.getElementById('m-in-name')?.value || '').trim();
+  const shares = parseFloat(document.getElementById('m-in-shares')?.value) || 0;
+  const avg    = parseFloat(document.getElementById('m-in-avg')?.value) || 0;
+
+  if (!code || code.length !== 4) { toast('4桁の証券コードを入力してください', 'err'); return; }
+  if (portfolio.find(s => s.code === code)) { toast('すでに追加済みです', 'err'); return; }
+
+  portfolio.push({ code, name, shares, avg_price: avg });
+  await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
+  _savePortfolioLocal(portfolio);
+  toast(`${code} を追加しました`);
+  await loadPortfolioMetrics();
+}
+
+function renderMobileRecommendations(recs) {
+  const container = document.getElementById('m-rec-body');
+  if (!container) return;
+  if (!recs || !recs.length) {
+    container.innerHTML = '<div class="empty" style="padding-top:60px"><div class="empty-icon">✅</div>入替推奨はありません</div>';
+    return;
+  }
+
+  container.innerHTML = recs.map(rec => {
+    const cur    = rec.current;
+    const curDiv = rec.current_annual_div || 0;
+    const sellOrder = JSON.stringify({
+      side:'sell', code:cur.code, name:cur.name||'',
+      shares:cur.shares||0, currentPrice:cur.current_price||0,
+      sellAmount:rec.sell_amount||0
+    }).replace(/'/g, '&apos;');
+
+    if (rec.no_same_sector) return `
+      <div class="m-swap-card">
+        <div class="m-sell-zone">
+          <div class="m-swap-code">${cur.code} <span style="font-weight:400;font-size:13px">${cur.name||''}</span></div>
+          <div class="m-swap-meta">条件: ${cur.conditions_met ?? '—'}/${cur.conditions_total ?? '—'} &nbsp; スコア: ${cur.score ?? '—'}</div>
+          <div class="m-swap-meta" style="color:var(--text3);margin-top:2px">同業種の入替候補なし（${cur.sector || 'セクター不明'}）</div>
+          <button class="m-order-btn m-order-sell" onclick='openOrderModal(${sellOrder})'>🔴 売り注文確認</button>
+        </div>
+      </div>`;
+
+    const candsHtml = rec.replacements.map((c, i) => {
+      const dc     = c.div_change || 0;
+      const dcPct  = c.div_change_pct || 0;
+      const dColor = dc >= 0 ? 'var(--ok)' : 'var(--ng)';
+      const dSign  = dc >= 0 ? '+' : '';
+      const buyOrder = JSON.stringify({
+        side:'buy', code:c.code, name:c.name||'',
+        estShares:c.est_shares||0, currentPrice:c.current_price||0,
+        estAmount:rec.sell_amount||0,
+        divChange:c.div_change||0, divChangePct:c.div_change_pct||0,
+        curAnnualDiv:curDiv, newAnnualDiv:c.est_annual_div||0
+      }).replace(/'/g, '&apos;');
+      return `
+        <div style="padding:12px 14px${i > 0 ? ';border-top:1px solid var(--border)' : ''}">
+          <div class="m-swap-code">${c.code} <span style="font-weight:400;font-size:13px;color:var(--ok)">${c.name||''}</span></div>
+          <div class="m-swap-meta">利回り: <b style="color:var(--accent)">${fmt(c.dividend_yield)}%</b> &nbsp; 条件: ${c.conditions_met ?? '—'} &nbsp; スコア: ${c.score ?? '—'}</div>
+          <div class="m-swap-divchg">
+            年間配当変化: <b style="color:${dColor}">${dSign}${fmtYen(dc)}円 (${dSign}${dcPct}%)</b><br>
+            <span style="font-size:11px;color:var(--text3)">${fmtYen(curDiv)}円 → ${fmtYen(c.est_annual_div)}円（約${fmt(c.est_shares)}株）</span>
+          </div>
+          <button class="m-order-btn m-order-buy" onclick='openOrderModal(${buyOrder})'>🟢 買い注文確認</button>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="m-swap-card">
+        <div class="m-sell-zone">
+          <div class="m-swap-code">${cur.code} <span style="font-weight:400;font-size:13px">${cur.name||''}</span></div>
+          <div class="m-swap-meta">条件: ${cur.conditions_met ?? '—'}/${cur.conditions_total ?? '—'} &nbsp; スコア: ${cur.score ?? '—'} &nbsp; 含み益: ${rec.gain_pct >= 0 ? '+' : ''}${rec.gain_pct}%</div>
+          <div class="m-swap-meta" style="color:var(--accent);margin-top:2px">→ 条件 +${rec.gain_conditions} 改善見込み</div>
+          <button class="m-order-btn m-order-sell" onclick='openOrderModal(${sellOrder})'>🔴 売り注文確認</button>
+        </div>
+        <div style="background:rgba(62,207,142,.03)">
+          <div class="m-buy-zone-hdr">入替候補</div>
+          ${candsHtml}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function renderMobileScreenResults(results) {
+  const list    = document.getElementById('m-screen-list');
+  const countEl = document.getElementById('m-screen-count');
+  if (!list) return;
+
+  if (!results || !results.length) {
+    list.innerHTML = '<div class="empty"><div class="empty-icon">🔍</div>条件に合う銘柄がありませんでした</div>';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+
+  const allMet = results.filter(r => r.all_conditions).length;
+  if (countEl) countEl.textContent = `${results.length}件ヒット（全条件合致: ${allMet}件）`;
+
+  const show = results.slice(0, 60);
+  list.innerHTML = show.map(m => {
+    const sc = m.score >= 75 ? 'var(--ok)' : (m.score >= 50 ? 'var(--warn)' : 'var(--ng)');
+    return `
+      <div class="m-result-card${m.all_conditions ? '" style="border-color:rgba(62,207,142,.35)' : ''}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div class="m-result-code">${m.code} <span style="font-weight:400;font-size:12px;color:var(--text2)">${m.name||''}</span></div>
+            <div style="font-size:11px;color:var(--text3);margin-top:1px">${m.sector||''} / ${m.market||''}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:17px;font-weight:700;color:var(--accent)">${fmt(m.dividend_yield)}%</div>
+            <div style="font-size:10px;color:var(--text2)">利回り</div>
+          </div>
+        </div>
+        <div class="m-result-metrics">
+          <span class="m-result-badge">DPS: ${fmt(m.dps)}</span>
+          <span class="m-result-badge">PER: ${m.per??'—'}</span>
+          <span class="m-result-badge">ROE: ${m.roe??'—'}%</span>
+          <span class="m-result-badge" style="color:${sc}">スコア: ${m.score}</span>
+          <span class="m-result-badge">条件: ${m.conditions_met}/${m.conditions_total}</span>
+          <span class="badge badge-${m.verdict_class}">${m.verdict}</span>
+        </div>
+      </div>`;
+  }).join('') + (results.length > 60
+    ? `<div style="text-align:center;color:var(--text2);font-size:12px;padding:14px">上位60件表示。残り${results.length - 60}件はPCで確認できます。</div>`
+    : '');
+}
+
+async function mRunRec() {
+  const btn = document.getElementById('m-rec-btn');
+  const pc  = document.getElementById('rec-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '分析中...'; }
+  if (pc)  { pc.disabled  = true; }
+  document.getElementById('m-rec-body').innerHTML =
+    '<div class="empty" style="padding-top:60px"><span class="loader"></span><div style="margin-top:12px;color:var(--text2)">分析中（数分かかります）</div></div>';
+  try {
+    const recs = await api('/api/recommendations');
+    renderRecommendations(recs);   // PC版 + モバイル版（renderRecommendations内でrenderMobileRecommendationsが呼ばれる）
+  } catch(e) {
+    document.getElementById('m-rec-body').innerHTML =
+      `<div class="empty"><div class="empty-icon">❌</div>${e.message}</div>`;
+    toast(e.message, 'err');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '分析実行'; }
+  if (pc)  { pc.disabled  = false; }
+}
+
+async function mSaveConfig() {
+  const key = (document.getElementById('m-cfg-apikey')?.value || '').trim();
+  if (!key) { toast('APIキーを入力してください', 'err'); return; }
+  await api('/api/config', { method: 'POST', body: JSON.stringify({ api_key: key }) });
+  toast('APIキーを保存しました');
+  const el = document.getElementById('m-cfg-apikey');
+  if (el) el.value = '';
+  const hint = document.getElementById('m-cfg-hint');
+  if (hint) hint.textContent = `現在のキー: ${key.slice(0,6)}...`;
+  // PC側のhintも同期
+  document.getElementById('cfg-hint').textContent = `現在のキー: ${key.slice(0,6)}...`;
+  checkConnection();
 }
 
 // ============================================================
