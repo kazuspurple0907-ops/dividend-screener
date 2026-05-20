@@ -1608,13 +1608,8 @@ def api_import_csv():
             return jsonify({'ok': False, 'message': err}), 400
         if not result:
             return jsonify({'ok': False, 'message': '株式銘柄が見つかりませんでした（投資信託は対象外です）'}), 400
-        existing = load_portfolio()
-        existing_map = {s['code']: s for s in existing}
-        for r in result:
-            existing_map[r['code']] = r
-        merged = list(existing_map.values())
-        save_portfolio(merged)
-        return jsonify({'ok': True, 'imported': len(result), 'total': len(merged)})
+        save_portfolio(result)
+        return jsonify({'ok': True, 'imported': len(result), 'total': len(result)})
     except Exception as e:
         return jsonify({'ok': False, 'message': str(e)}), 500
 
