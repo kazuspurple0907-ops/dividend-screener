@@ -184,8 +184,6 @@
   .rec-gain { font-size: 11px; background: rgba(62,207,142,.1); color: var(--ok); border-radius: 4px; padding: 2px 7px; white-space: nowrap; }
 
   /* SBI注文ボタン */
-  .btn-sbi-sell { background: rgba(231,76,60,.15); color: var(--ng); border: 1px solid rgba(231,76,60,.35); font-size: 12px; padding: 5px 12px; text-decoration: none; }
-  .btn-sbi-sell:hover { background: rgba(231,76,60,.28); }
   .btn-sbi-buy  { background: rgba(62,207,142,.15); color: var(--ok); border: 1px solid rgba(62,207,142,.35); font-size: 13px; padding: 10px 16px; min-height: 44px; text-decoration: none; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 500; transition: all .15s; }
   .btn-sbi-buy:hover  { background: rgba(62,207,142,.28); }
   .btn-sbi-sell { background: rgba(231,76,60,.15); color: var(--ng); border: 1px solid rgba(231,76,60,.35); font-size: 13px; padding: 10px 16px; min-height: 44px; text-decoration: none; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 500; transition: all .15s; }
@@ -357,8 +355,8 @@
     <div id="modal-body"></div>
     <div class="modal-note" id="modal-note"></div>
     <div class="modal-footer">
-      <a id="modal-sbi-btn" class="btn" href="#" target="_blank" onclick="closeOrderModal()"></a>
       <button class="btn btn-secondary" onclick="closeOrderModal()">キャンセル</button>
+      <a id="modal-sbi-btn" class="btn" href="#" target="_blank" onclick="closeOrderModal()"></a>
     </div>
   </div>
 </div>
@@ -696,8 +694,22 @@ function toast(msg, type = 'ok') {
 // ============================================================
 // API ヘルパー
 // ============================================================
+const _BASE = 'https://web-production-7d556.up.railway.app';
+const LS_PF_KEY  = 'dividend_screener_portfolio_v2';
+const LS_API_KEY = 'dividend_screener_api_key';
+
+function getStoredApiKey() {
+  return (localStorage.getItem(LS_API_KEY) || '').trim();
+}
+function getStoredPortfolio() {
+  try { return JSON.parse(localStorage.getItem(LS_PF_KEY) || '[]'); } catch(_) { return []; }
+}
+function savePortfolioToLS(pf) {
+  try { localStorage.setItem(LS_PF_KEY, JSON.stringify(pf)); } catch(_) {}
+}
+
 async function api(path, opts = {}) {
-  const r = await fetch(path, {
+  const r = await fetch(_BASE + path, {
     headers: { 'Content-Type': 'application/json' },
     ...opts
   });
@@ -712,17 +724,17 @@ async function api(path, opts = {}) {
 // 設定
 // ============================================================
 async function loadConfig() {
-  try {
-    const d = await api('/api/config');
-    if (d.api_key_hint) document.getElementById('cfg-hint').textContent = `現在のキー: ${d.api_key_hint}`;
-    if (d.configured) checkConnection();
-  } catch (e) {}
+  const key = getStoredApiKey();
+  if (key) {
+    document.getElementById('cfg-hint').textContent = `現在のキー: ${key.slice(0,6)}...`;
+    checkConnection();
+  }
 }
 
 async function saveConfig() {
   const api_key = document.getElementById('cfg-apikey').value.trim();
   if (!api_key) { toast('APIキーを入力してください', 'err'); return; }
-  await api('/api/config', { method: 'POST', body: JSON.stringify({ api_key }) });
+  localStorage.setItem(LS_API_KEY, api_key);
   toast('APIキーを保存しました');
   document.getElementById('cfg-apikey').value = '';
   document.getElementById('cfg-hint').textContent = `現在のキー: ${api_key.slice(0,6)}...`;
@@ -733,7 +745,7 @@ async function testConnection() {
   const btn = document.getElementById('test-btn');
   btn.disabled = true; btn.textContent = '確認中...';
   try {
-    const r = await api('/api/test_connection');
+    const r = await api('/api/test_connection', { method: 'POST', body: JSON.stringify({ api_key: getStoredApiKey() }) });
     toast(r.message, 'ok');
     setApiStatus(true);
   } catch (e) {
@@ -745,7 +757,7 @@ async function testConnection() {
 
 async function checkConnection() {
   try {
-    await api('/api/test_connection');
+    await api('/api/test_connection', { method: 'POST', body: JSON.stringify({ api_key: getStoredApiKey() }) });
     setApiStatus(true);
   } catch (e) {
     setApiStatus(false);
@@ -791,31 +803,8 @@ let portfolio = [];
 let portfolioMetrics = [];
 let lastScreenResults = [];
 
-function _savePortfolioLocal(pf) {
-  if (pf && pf.length > 0) {
-    try { localStorage.setItem('pf_backup', JSON.stringify(pf)); } catch(_) {}
-  }
-}
-
 async function loadPortfolio() {
-  portfolio = await api('/api/portfolio');
-
-  // Railwayリデプロイでサーバーデータが消えた場合、localStorageから自動復元
-  if (!portfolio.length) {
-    try {
-      const saved = localStorage.getItem('pf_backup');
-      if (saved) {
-        const backup = JSON.parse(saved);
-        if (backup.length > 0) {
-          portfolio = backup;
-          await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
-          toast('ポートフォリオをバックアップから復元しました (' + portfolio.length + '銘柄)');
-        }
-      }
-    } catch(_) {}
-  }
-
-  _savePortfolioLocal(portfolio);
+  portfolio = getStoredPortfolio();
   renderPortfolioTable(portfolio.map(s => ({ ...s })));
 }
 
@@ -844,8 +833,7 @@ async function addStock() {
   if (portfolio.find(s => s.code === code)) { toast('すでに追加済みです', 'err'); return; }
 
   portfolio.push({ code, name, shares, avg_price: avg, memo });
-  await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
-  _savePortfolioLocal(portfolio);
+  savePortfolioToLS(portfolio);
 
   ['in-code','in-name','in-shares','in-avg','in-memo'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('add-stock-form').classList.remove('open');
@@ -855,8 +843,7 @@ async function addStock() {
 
 async function removeStock(code) {
   portfolio = portfolio.filter(s => s.code !== code);
-  await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
-  _savePortfolioLocal(portfolio);
+  savePortfolioToLS(portfolio);
   toast(`${code} を削除しました`);
   await loadPortfolioMetrics();
 }
@@ -868,11 +855,13 @@ async function importCSV() {
   const formData = new FormData();
   formData.append('file', fileInput.files[0]);
   try {
-    const r = await fetch('/api/import/csv', { method: 'POST', body: formData });
+    const r = await fetch(_BASE + '/api/import/csv', { method: 'POST', body: formData });
     const d = await r.json();
     if (!d.ok) throw new Error(d.message);
+    portfolio = d.portfolio;
+    savePortfolioToLS(portfolio);
+    renderPortfolioTable(portfolio.map(s => ({ ...s })));
     toggleImportArea('csv-import-area');
-    await loadPortfolio();  // loadPortfolio内でlocalStorageに保存される
     toast(`${d.imported}件をインポートしました。指標を取得中...（約5〜10秒）`);
     await loadPortfolioMetrics();
   } catch (e) {
@@ -888,12 +877,12 @@ async function loadPortfolioMetrics() {
 
   // バックグラウンドで最新データの取得を開始（202 即時返却）
   try {
-    await api('/api/portfolio/metrics/refresh', { method: 'POST' });
+    await api('/api/portfolio/metrics/refresh', { method: 'POST', body: JSON.stringify({ portfolio, api_key: getStoredApiKey() }) });
   } catch (_) {}
 
   // 現在キャッシュのデータを即時表示（すでにデータがあれば暫定表示）
   try {
-    portfolioMetrics = await api('/api/portfolio/metrics');
+    portfolioMetrics = await api('/api/portfolio/metrics', { method: 'POST', body: JSON.stringify({ portfolio }) });
     renderPortfolioTable(portfolioMetrics);
     renderSummary(portfolioMetrics);
     checkJQBanner(portfolioMetrics);
@@ -907,7 +896,7 @@ async function loadPortfolioMetrics() {
 
   // 更新後のデータを再取得して表示
   try {
-    portfolioMetrics = await api('/api/portfolio/metrics');
+    portfolioMetrics = await api('/api/portfolio/metrics', { method: 'POST', body: JSON.stringify({ portfolio }) });
     renderPortfolioTable(portfolioMetrics);
     renderSummary(portfolioMetrics);
     checkJQBanner(portfolioMetrics);
@@ -1093,7 +1082,7 @@ async function runScreen(isAutoRetry) {
   }
 
   try {
-    const resp = await api('/api/screen');
+    const resp = await api('/api/screen', { method: 'POST', body: JSON.stringify({ portfolio_codes: portfolio.map(s => s.code), api_key: getStoredApiKey() }) });
     const results = Array.isArray(resp) ? resp : (resp.data || []);
 
     if (resp.building) {
@@ -1235,7 +1224,7 @@ async function loadRecommendations() {
   document.getElementById('rec-list').innerHTML = '<div class="empty"><span class="loader"></span> 分析中（スクリーニング実行も含むため数分かかります）</div>';
 
   try {
-    const recs = await api('/api/recommendations');
+    const recs = await api('/api/recommendations', { method: 'POST', body: JSON.stringify({ portfolio, api_key: getStoredApiKey() }) });
     renderRecommendations(recs);
   } catch (e) {
     toast(e.message, 'err');
@@ -1365,7 +1354,7 @@ async function loadAlerts() {
   const ldr = document.getElementById('alert-loader');
   ldr.innerHTML = '<span class="loader"></span>';
   try {
-    const alerts = await api('/api/alerts');
+    const alerts = await api('/api/alerts', { method: 'POST', body: JSON.stringify({ portfolio_codes: portfolio.map(s => s.code) }) });
     renderAlerts(alerts);
   } catch (e) {
     toast(e.message, 'err');
@@ -1472,7 +1461,7 @@ function sortTable(tableId, colIdx) {
 // ============================================================
 async function clearCache() {
   try {
-    const r = await api('/api/clear_cache', { method: 'POST' });
+    const r = await api('/api/clear_cache', { method: 'POST', body: JSON.stringify({}) });
     toast(r.message);
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -1653,8 +1642,7 @@ async function mAddStock() {
   if (portfolio.find(s => s.code === code)) { toast('すでに追加済みです', 'err'); return; }
 
   portfolio.push({ code, name, shares, avg_price: avg });
-  await api('/api/portfolio', { method: 'POST', body: JSON.stringify(portfolio) });
-  _savePortfolioLocal(portfolio);
+  savePortfolioToLS(portfolio);
   toast(`${code} を追加しました`);
   await loadPortfolioMetrics();
 }
@@ -1777,7 +1765,7 @@ async function mRunRec() {
   document.getElementById('m-rec-body').innerHTML =
     '<div class="empty" style="padding-top:60px"><span class="loader"></span><div style="margin-top:12px;color:var(--text2)">分析中（数分かかります）</div></div>';
   try {
-    const recs = await api('/api/recommendations');
+    const recs = await api('/api/recommendations', { method: 'POST', body: JSON.stringify({ portfolio, api_key: getStoredApiKey() }) });
     renderRecommendations(recs);   // PC版 + モバイル版（renderRecommendations内でrenderMobileRecommendationsが呼ばれる）
   } catch(e) {
     document.getElementById('m-rec-body').innerHTML =
@@ -1791,7 +1779,7 @@ async function mRunRec() {
 async function mSaveConfig() {
   const key = (document.getElementById('m-cfg-apikey')?.value || '').trim();
   if (!key) { toast('APIキーを入力してください', 'err'); return; }
-  await api('/api/config', { method: 'POST', body: JSON.stringify({ api_key: key }) });
+  localStorage.setItem(LS_API_KEY, key);
   toast('APIキーを保存しました');
   const el = document.getElementById('m-cfg-apikey');
   if (el) el.value = '';
@@ -1812,7 +1800,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // キャッシュがあれば起動時にメトリクスを即時表示（APIコールなし）
   if (portfolio.length) {
     try {
-      const metrics = await api('/api/portfolio/metrics');
+      const metrics = await api('/api/portfolio/metrics', { method: 'POST', body: JSON.stringify({ portfolio }) });
       if (metrics.some(m => m.dps > 0 || m.per != null)) {
         portfolioMetrics = metrics;
         renderPortfolioTable(portfolioMetrics);
@@ -1821,9 +1809,9 @@ window.addEventListener('DOMContentLoaded', async () => {
       }
     } catch (_) {}
   }
-  // ポートフォリオが空の場合のみprefetch（portfolioありの場合はデータ更新後にfins_v2が自動構築される）
+  // ポートフォリオが空の場合のみprefetch
   if (!portfolio.length) {
-    fetch('/api/screen/prefetch', { method: 'POST' }).catch(() => {});
+    fetch(_BASE + '/api/screen/prefetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api_key: getStoredApiKey() }) }).catch(() => {});
   }
 });
 </script>
