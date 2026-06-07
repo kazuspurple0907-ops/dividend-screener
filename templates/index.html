@@ -852,21 +852,56 @@ async function removeStock(code) {
 async function importCSV() {
   const fileInput = document.getElementById('csv-file-input');
   if (!fileInput.files[0]) { toast('ファイルを選択してください', 'err'); return; }
-  const formData = new FormData();
-  formData.append('file', fileInput.files[0]);
   try {
-    const r = await fetch(_BASE + '/api/import/csv', { method: 'POST', body: formData });
-    const d = await r.json();
-    if (!d.ok) throw new Error(d.message);
-    portfolio = d.portfolio;
+    const result = await _parseCSVClient(fileInput.files[0]);
+    if (!result.length) { toast('株式銘柄が見つかりませんでした', 'err'); return; }
+    portfolio = result;
     savePortfolioToLS(portfolio);
     renderPortfolioTable(portfolio.map(s => ({ ...s })));
     toggleImportArea('csv-import-area');
-    toast(`${d.imported}件をインポートしました。指標を取得中...（約5〜10秒）`);
+    toast(`${result.length}件をインポートしました。指標を取得中...（約5〜10秒）`);
     await loadPortfolioMetrics();
   } catch (e) {
     toast(e.message, 'err');
   }
+}
+
+// クライアントサイドCSVパーサー（SBI証券 CP932/UTF-8対応）
+async function _parseCSVClient(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  let content = '';
+  for (const enc of ['shift-jis', 'utf-8']) {
+    try { content = new TextDecoder(enc).decode(arrayBuffer); break; } catch(_) {}
+  }
+  const lines = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const CODE_COLS = ['証券コード', 'コード', '銘柄コード', 'code', 'Code'];
+  const headerIdx = lines.findIndex(l => CODE_COLS.some(c => l.includes(c)));
+  if (headerIdx === -1) throw new Error('証券コード列が見つかりません');
+
+  const parseRow = line => line.split(',').map(c => c.trim().replace(/^["'﻿]+|["']+$/g, ''));
+  const headers = parseRow(lines[headerIdx]);
+
+  const result = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const cells = parseRow(lines[i]);
+    const row = {};
+    headers.forEach((h, idx) => { row[h] = cells[idx] || ''; });
+
+    let code = '';
+    for (const col of CODE_COLS) {
+      const val = (row[col] || '').trim();
+      if (/^[0-9A-Za-z]{4}$/.test(val)) { code = val.toUpperCase(); break; }
+    }
+    if (!code) continue;
+
+    const name = (row['銘柄名称'] || row['銘柄名'] || row['銘柄'] || '').trim();
+    const shares = parseInt((row['保有株数'] || row['保有数量'] || row['数量'] || '0').replace(/,/g, '')) || 0;
+    const avg    = parseFloat((row['取得単価'] || row['平均取得単価'] || '0').replace(/,/g, '')) || 0;
+    if (shares <= 0) continue;
+    result.push({ code, name, shares, avg_price: avg, memo: '' });
+  }
+  return result;
 }
 
 
